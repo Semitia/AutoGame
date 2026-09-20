@@ -1,0 +1,14 @@
+{
+  "stage": 34,
+  "next_price_ratio": {"upgrade": 2, "summon": 1},
+  "price_tie_action": "summon",
+  "max_tier": 4,
+  "buff_priority": ["sea", "sword", "snow", "mermaid"],
+  "same_role_buff_default_index": 1,
+  "heroes": {
+    "sea": {"name": "海王", "role": "damage", "keep_if_space": true, "reserve": 1, "buff_keywords": ["海王", "鲸", "海洋", "海浪", "海神"]},
+    "sword": {"name": "剑圣", "role": "damage", "keep_if_space": true, "reserve": 1, "buff_keywords": ["剑圣", "剑", "斩", "连新", "锋刃", "旋风"]},
+    "snow": {"name": "雪姬", "role": "control", "keep_if_space": false, "reserve": 2, "buff_keywords": ["雪姬", "冰", "雪", "寒", "霜", "凤凰"]},
+    "mermaid": {"name": "美人鱼", "role": "support", "keep_if_space": false, "reserve": 2, "buff_keywords": ["美人鱼", "圣泉", "灵泉"]}
+  }
+}

@@ -1,0 +1,42 @@
+# Machine-local configuration and credentials
+/config/local.json
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime state, screenshots, logs, captures and archived sessions
+/runtime/
+/local_archive/
+/work/
+**/runs/
+**/state.json
+**/state.tmp
+**/runner.lock
+**/STOP
+*.log
+
+# Local Python installation, downloaded models and dependencies
+/.local/
+.deps/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+# Game assets and curated evidence under assets/ remain tracked.

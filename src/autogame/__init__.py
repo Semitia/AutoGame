@@ -1,0 +1,1 @@
+"""AutoGame automation components."""

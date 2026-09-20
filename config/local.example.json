@@ -1,0 +1,8 @@
+{
+  "python": "C:/path/to/python.exe",
+  "mumu": {
+    "adb": "C:/Program Files/NetEase/MuMu/nx_main/adb.exe",
+    "manager": "C:/Program Files/NetEase/MuMu/nx_main/MuMuManager.exe",
+    "index": 0
+  }
+}

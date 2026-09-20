@@ -1,0 +1,4 @@
+opencv-python-headless==5.0.0.93
+numpy
+Pillow
+rapidocr-onnxruntime==1.4.4
