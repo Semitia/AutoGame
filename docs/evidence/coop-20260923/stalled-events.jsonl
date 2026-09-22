@@ -1,0 +1,40 @@
+{"time": "00:10:45", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 2300}}
+{"time": "00:10:47", "side": "guest", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 400, "summon": 175, "money": 1400}}
+{"time": "00:10:49", "side": "host", "event": "purchase", "action": "summon", "prices": {"upgrade": 200, "summon": 80, "money": 2400}}
+{"time": "00:10:52", "side": "guest", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 600, "summon": 190, "money": 974}}
+{"time": "00:10:53", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 2600}}
+{"time": "00:10:57", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 3000}}
+{"time": "00:11:01", "side": "guest", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 1000, "summon": 200, "money": 1000}}
+{"time": "00:11:01", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 3300}}
+{"time": "00:11:05", "side": "guest", "event": "purchase", "action": "summon", "prices": {"upgrade": 1000, "summon": 200, "money": 1400}}
+{"time": "00:11:05", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 3700}}
+{"time": "00:11:09", "side": "guest", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 1000, "summon": 200, "money": 1700}}
+{"time": "00:11:09", "side": "host", "event": "purchase", "action": "summon", "prices": {"upgrade": 200, "summon": 80, "money": 4000}}
+{"time": "00:11:13", "side": "guest", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 1000, "summon": 200, "money": 1700}}
+{"time": "00:11:13", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4000}}
+{"time": "00:11:17", "side": "guest", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 1000, "summon": 200, "money": 1800}}
+{"time": "00:11:18", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4100}}
+{"time": "00:11:21", "side": "guest", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 1000, "summon": 200, "money": 1800}}
+{"time": "00:11:22", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4100}}
+{"time": "00:11:25", "side": "guest", "event": "purchase", "action": "summon", "prices": {"upgrade": 1000, "summon": 200, "money": 1900}}
+{"time": "00:11:27", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4200}}
+{"time": "00:11:30", "side": "guest", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 1000, "summon": 200, "money": 1900}}
+{"time": "00:11:31", "side": "host", "event": "purchase", "action": "summon", "prices": {"upgrade": 200, "summon": 80, "money": 4200}}
+{"time": "00:11:36", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4300}}
+{"time": "00:11:41", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4300}}
+{"time": "00:11:45", "side": "guest", "event": "purchase", "action": "summon", "prices": {"upgrade": 1500, "summon": 200, "money": 1000}}
+{"time": "00:11:45", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4300}}
+{"time": "00:11:50", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4300}}
+{"time": "00:11:55", "side": "host", "event": "purchase", "action": "summon", "prices": {"upgrade": 200, "summon": 80, "money": 4900}}
+{"time": "00:11:56", "side": "guest", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 1500, "summon": 200, "money": 1600}}
+{"time": "00:11:59", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4900}}
+{"time": "00:12:04", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4900}}
+{"time": "00:12:09", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4900}}
+{"time": "00:12:13", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 200, "summon": 80, "money": 4900}}
+{"time": "00:12:17", "side": "host", "event": "purchase", "action": "summon", "prices": {"upgrade": 200, "summon": 80, "money": 4900}}
+{"time": "00:12:20", "side": "guest", "event": "purchase", "action": "summon", "prices": {"upgrade": 1800, "summon": 200, "money": 216}}
+{"time": "00:12:21", "side": "host", "event": "waiting_screen", "text": "请选择 雷电分身 红色炽焰 自由落体 小袋银币 立即获得400枚银币 幸运！ 续 点击空白处关闭"}
+{"time": "00:12:28", "side": "guest", "event": "stopped"}
+{"time": "00:12:28", "side": "host", "event": "stopped"}
+worker_result stopped
+worker_result stopped

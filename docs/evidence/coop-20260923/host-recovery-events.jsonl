@@ -1,0 +1,15 @@
+{"time": "00:17:19", "side": "host", "event": "buff_choice", "cards": ["地鼠接龙 每次释放头槌，下 次头槌体积会变大 10%，伤害提升1 5%", "大力头槌 头槌伤害+120%", "雷电分身 在每段飞行终点， 留下分身残影，持 续释放弧形电击脉 冲"], "selected": 1}
+{"time": "00:17:23", "side": "host", "event": "purchase", "action": "summon", "prices": {"upgrade": 1500, "summon": 130, "money": 12700}}
+{"time": "00:17:27", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 1500, "summon": 130, "money": 2900}}
+{"time": "00:17:33", "side": "host", "event": "buff_choice", "cards": ["熊熊烈火 变为燃烧熊，持续 灼烧周围的怪物", "火焰爆发 火焰射线有40%概 率爆发成巨型火焰 提升240%伤害", "身强体壮 熊的血量提升60%"], "selected": 1}
+{"time": "00:17:37", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 1800, "summon": 130, "money": 11500}}
+{"time": "00:17:43", "side": "host", "event": "buff_choice", "cards": ["雷切 在每一段雷电突袭 的终点有50%几率 制造雷切爆点，引 发范围伤害", "熊熊烈火 变为燃烧熊，持续 灼烧周围的怪物", "大力熊掌 攻击与嘲讽个数+5 伤害-20%"], "selected": 1}
+{"time": "00:17:46", "side": "host", "event": "purchase", "action": "summon", "prices": {"upgrade": 2500, "summon": 130, "money": 10000}}
+{"time": "00:17:50", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 2500, "summon": 130, "money": 10000}}
+{"time": "00:17:56", "side": "host", "event": "buff_choice", "cards": ["雷电扩张 在突袭中卡卡体型 变大+60%，对更 多怪物造成冲击", "连环头槌 地鼠头槌次数+3", "雷电分身 在每段飞行终点， 留下分身残影，持 续释放弧形电击脉 冲"], "selected": 1}
+{"time": "00:17:59", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 3000, "summon": 130, "money": 7500}}
+{"time": "00:18:05", "side": "host", "event": "buff_choice", "cards": ["地鼠接龙 每次释放头槌，下 次头槌体积会变大 10%，伤害提升1 5%", "雷电分身 在每段飞行终点， 留下分身残影，持 续释放弧形电击脉 冲", "燃烧扩大 燃烧范围变大 60%"], "selected": 1}
+{"time": "00:18:09", "side": "host", "event": "purchase", "action": "summon", "prices": {"upgrade": 3500, "summon": 130, "money": 4500}}
+{"time": "00:18:12", "side": "host", "event": "purchase", "action": "upgrade", "prices": {"upgrade": 3500, "summon": 130, "money": 4500}}
+{"time": "00:18:13", "side": "host", "event": "stopped"}
+worker_result stopped

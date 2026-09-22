@@ -2,6 +2,7 @@
 
 以截图、输入和可恢复状态驱动的游戏自动化项目。目前实现 **MuMu +《永远的蔚蓝星球》**，保留旧目录标识 `bilibili_hero_merge`。原大号第34关入口继续可用，新增 `blue_planet` 四位置战术入口。
 
+- [双人模式交接：未完成，不可直接挂机](docs/HANDOFF-COOP-2026-09-23.md)
 - [游戏接手备忘](docs/BLUE-PLANET-MEMORY.md)
 - [四位置战术与单局/循环](docs/TACTICAL-RUNNER.md)
 - [本轮工作总结](docs/SESSION-2026-09-18.md)
