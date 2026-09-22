@@ -215,11 +215,17 @@ class StrategicBot(Bot):
     title=self.reader.lines(self.raw,(220,230,860,420));won='胜利' in title;lost='失败' in title
     self.log('settlement',title=title,victory=won);cv2.imwrite(str(self.out/f'result-{self.rounds}.png'),self.im)
     if won:cv2.imwrite(str(ROOT/'assets'/'victory.png'),self.im[116:152,149:281])
-    time.sleep(2)
-    for _ in range(3):
-     self.tap(215,710);time.sleep(1);self.shot()
-     if self.home():self.log('return_verified');break
-     if not self.has('return',(100,640,240,125),.86):break
+    # Return only once. A queued second tap can hit the king tab after
+    # the settlement disappears, even if the previous capture was stale.
+    self.tap(215,710);time.sleep(2)
+    return_deadline=time.monotonic()+12
+    while time.monotonic()<return_deadline:
+     self.shot()
+     if self.home():
+      time.sleep(1);self.shot()
+      if self.home():self.log('return_verified');break
+     if (RUNTIME/'STOP').exists():self.pause_stop('stop_file');return
+     time.sleep(.4)
     self.pending_action=None;self.save();unknown=0
     if not won and not lost:self.log('settlement_unreadable',title=title);return
     if not self.args.until_stamina and (not won or self.rounds>=self.args.runs):self.log('finished',victory=won,rounds=self.rounds);return
@@ -227,11 +233,19 @@ class StrategicBot(Bot):
    if self.has('repeat',(45,400,155,55)):
     self.tap(124,429);unknown=0;transition_until=time.monotonic()+20;time.sleep(.7);continue
    if self.home():
+    if time.monotonic()<transition_until:
+     time.sleep(.3);continue
+    # Defeat can show a growth guide over the home screen. Its dimmed
+    # background still matches the old templates; close the observed guide.
+    overlay=self.reader.lines(self.raw,(200,250,1000,650))
+    if '变强攻略' in overlay:
+     self.tap(395,180);self.log('close_growth_guide');time.sleep(.7);continue
     stamina=self.reader.text(self.raw,(925,163,1060,212));match=re.search(r'(\d+)\s*/',stamina)
     if not match:self.log('stamina_unreadable',text=stamina);return
     if int(match[1])<10:self.log('stamina_exhausted',remaining=int(match[1]));return
     if not self.args.until_stamina and self.rounds>=self.args.runs:self.log('run_limit');return
     self.units={};self.available={(x,603) for x in [87,130,173,216,259,302,345]};self.summons=0;self.pending_action=None;self.blocked_pairs={};self.bad_prices=0;self.wait_settlement=False;self.repair_mode=False;self.repair_due={};self.last_repair=0;self.rounds+=1;self.save()
+    cv2.imwrite(str(self.out/f'home-before-start-{self.rounds}.png'),self.im)
     self.log('start_stage',stage=self.stage,stamina=int(match[1]),round=self.rounds);self.tap(216,610);unknown=0;transition_until=time.monotonic()+20;time.sleep(.7);continue
    if self.battle():
     unknown=0

@@ -1,12 +1,12 @@
 """Game-specific visual primitives. Coordinates use a 432x768 reference."""
-import argparse,io,json,subprocess,time,sys,msvcrt
+import argparse,io,json,subprocess,time,sys,msvcrt,os
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent
 REPO=ROOT.parents[1]
 sys.path.insert(0,str(REPO/'src'))
 sys.path.insert(0,str(REPO/'.local/python-deps'))
 from autogame.platforms.mumu import MuMuPlatform
-RUNTIME=REPO/'runtime'/'bilibili_hero_merge'
+RUNTIME=Path(os.environ.get('AUTOGAME_RUNTIME',str(REPO/'runtime'/'bilibili_hero_merge'))).resolve()
 RUNTIME.mkdir(parents=True,exist_ok=True)
 import cv2
 import numpy as np

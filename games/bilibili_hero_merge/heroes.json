@@ -1,0 +1,75 @@
+{
+  "bomb": {
+    "name": "小炮",
+    "buff_keywords": [
+      "炸弹",
+      "次级弹"
+    ]
+  },
+  "archer": {
+    "name": "游侠",
+    "buff_keywords": [
+      "箭矢",
+      "齐射术",
+      "连击术"
+    ]
+  },
+  "ice": {
+    "name": "冰法师",
+    "buff_keywords": [
+      "冰爆",
+      "冰锥"
+    ]
+  },
+  "athena": {
+    "name": "雅典娜",
+    "buff_keywords": [
+      "祝福"
+    ]
+  },
+  "sea": {
+    "name": "海王",
+    "buff_keywords": [
+      "鲸",
+      "海洋",
+      "海浪",
+      "海神"
+    ]
+  },
+  "sword": {
+    "name": "剑圣",
+    "buff_keywords": [
+      "剑",
+      "斩",
+      "锋刃",
+      "旋风"
+    ]
+  },
+  "snow": {
+    "name": "雪姬",
+    "buff_keywords": [
+      "冰",
+      "雪",
+      "寒",
+      "霜",
+      "凤凰"
+    ]
+  },
+  "mermaid": {
+    "name": "美人鱼",
+    "buff_keywords": [
+      "圣泉",
+      "灵泉"
+    ]
+  },
+  "knight": {
+    "buff_keywords": [
+      "飞斧",
+      "狼牙棒",
+      "三板斧",
+      "人在塔在",
+      "骑士"
+    ],
+    "name": "骑士"
+  }
+}

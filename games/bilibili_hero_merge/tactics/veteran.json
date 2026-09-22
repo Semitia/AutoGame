@@ -1,0 +1,10 @@
+{
+  "name": "大号：海王剑圣双输出",
+  "price_ratio": {"upgrade": 2, "summon": 1},
+  "slots": [
+    {"hero": "sea", "role": "damage"},
+    {"hero": "sword", "role": "damage"},
+    {"hero": "snow", "role": "control", "reserve": 2},
+    {"hero": "mermaid", "role": "support", "reserve": 2}
+  ]
+}

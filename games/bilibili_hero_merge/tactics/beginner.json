@@ -1,0 +1,50 @@
+{
+  "name": "新号：骑士、小炮双输出，冰法师控制、雅典娜辅助",
+  "price_ratio": {
+    "upgrade": 2,
+    "summon": 1
+  },
+  "slots": [
+    {
+      "hero": "bomb",
+      "role": "damage",
+      "min_remaining": 1,
+      "buff_order": [
+        "恶魔次级弹",
+        "分裂炸弹",
+        "双重次级弹",
+        "重型次级弹",
+        "双重炸弹",
+        "大型炸弹",
+        "火焰炸弹"
+      ]
+    },
+    {
+      "hero": "knight",
+      "role": "damage",
+      "buff_order": [
+        "狼牙棒",
+        "巨型飞斧",
+        "连环飞斧",
+        "首次撞击",
+        "飞斧强化"
+      ]
+    },
+    {
+      "hero": "ice",
+      "role": "control",
+      "reserve": 2
+    },
+    {
+      "hero": "athena",
+      "role": "support",
+      "reserve": 2
+    }
+  ],
+  "buff_priority": [
+    "knight",
+    "bomb",
+    "ice",
+    "athena"
+  ]
+}

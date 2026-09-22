@@ -1,7 +1,9 @@
 # AutoGame
 
-以截图、输入和可恢复状态驱动的游戏自动化项目。目前实现 **MuMu + 哔哩哔哩英雄合成小游戏**，使用暂定标识 `bilibili_hero_merge`；其他平台和游戏尚未实现。
+以截图、输入和可恢复状态驱动的游戏自动化项目。目前实现 **MuMu +《永远的蔚蓝星球》**，保留旧目录标识 `bilibili_hero_merge`。原大号第34关入口继续可用，新增 `blue_planet` 四位置战术入口。
 
+- [游戏接手备忘](docs/BLUE-PLANET-MEMORY.md)
+- [四位置战术与单局/循环](docs/TACTICAL-RUNNER.md)
 - [本轮工作总结](docs/SESSION-2026-09-18.md)
 - [架构及扩展约定](docs/ARCHITECTURE.md)
 - [运行与恢复说明](docs/RUNBOOK.md)

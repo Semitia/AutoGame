@@ -18,6 +18,7 @@ def merge_pair(units, config, must_free_slot=False, blocked_pairs=()):
             if (a,b) in blocked_pairs or (b,a) in blocked_pairs:continue
             if ua['hero']!=ub['hero'] or ua['tier']!=ub['tier'] or ub.get('uncertain'):continue
             h=config['heroes'][ua['hero']]
+            if counts[ua['hero']]-2 < h.get('min_remaining',0):continue
             excess=not h['keep_if_space'] and counts[ua['hero']]>h['reserve']
             if not excess and not (must_free_slot and h['keep_if_space']):continue
             pairs.append(((0 if excess else 1,ua['tier'],-rank.get(ua['hero'],99)),a,b))
