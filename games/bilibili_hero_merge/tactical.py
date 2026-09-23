@@ -10,6 +10,7 @@ import time
 from strategic import StrategicBot, ROOT, RUNTIME, cv2
 from tactics import load_tactics, choose_card
 from vision import Reader
+from autogame.platforms.lease import device_lease
 
 
 class TacticalReader(Reader):
@@ -308,16 +309,17 @@ def main():
     args=parser.parse_args()
     if args.stage<1 or args.minutes<=0 or args.runs<1:parser.error('stage, minutes and runs must be positive')
     args.resume=False;args.hide=False
-    lock=(RUNTIME/'runner.lock').open('a+b');lock.seek(0)
-    try:msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
-    except OSError:raise SystemExit('Another farmer is running')
-    try:
-        if (RUNTIME/'STOP').exists():raise SystemExit('STOP exists; inspect before restarting')
-        bot=TacticalBot(args)
-        try:bot.run()
-        except Exception as error:
-            bot.log('exception',error=str(error));bot.pause_stop('exception');raise
-    finally:lock.close()
+    with device_lease(args.device):
+        lock=(RUNTIME/'runner.lock').open('a+b');lock.seek(0)
+        try:msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
+        except OSError:raise SystemExit('Another farmer is running')
+        try:
+            if (RUNTIME/'STOP').exists():raise SystemExit('STOP exists; inspect before restarting')
+            bot=TacticalBot(args)
+            try:bot.run()
+            except Exception as error:
+                bot.log('exception',error=str(error));bot.pause_stop('exception');raise
+        finally:lock.close()
 
 if __name__=='__main__':main()
 

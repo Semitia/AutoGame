@@ -4,6 +4,7 @@ from pathlib import Path
 from farmer import Bot,ROOT,RUNTIME,cv2,np
 from policy import price_action,merge_pair
 from vision import Reader,tile_scores
+from autogame.platforms.lease import device_lease
 
 class StrategicBot(Bot):
  def __init__(self,args):
@@ -265,12 +266,13 @@ class StrategicBot(Bot):
 if __name__=='__main__':
  sys.stdout.reconfigure(encoding='utf8')
  p=argparse.ArgumentParser();p.add_argument('--device',default='emulator-5554');p.add_argument('--runs',type=int,default=1);p.add_argument('--minutes',type=int,default=15);p.add_argument('--hide',action='store_true');p.add_argument('--resume',action='store_true');p.add_argument('--until-stamina',action='store_true',help='Repeat wins or losses until stamina is below 10; never refill.');a=p.parse_args()
- lock=(RUNTIME/'runner.lock').open('a+b');lock.seek(0)
- try:msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
- except OSError:raise SystemExit('Another farmer is running')
- (RUNTIME/'STOP').unlink(missing_ok=True)
- b=StrategicBot(a)
- try:b.run()
- except Exception as e:
-  b.log('exception',error=str(e));b.pause_stop('exception');raise
- finally:lock.close()
+ with device_lease(a.device):
+  lock=(RUNTIME/'runner.lock').open('a+b');lock.seek(0)
+  try:msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
+  except OSError:raise SystemExit('Another farmer is running')
+  (RUNTIME/'STOP').unlink(missing_ok=True)
+  b=StrategicBot(a)
+  try:b.run()
+  except Exception as e:
+   b.log('exception',error=str(e));b.pause_stop('exception');raise
+  finally:lock.close()

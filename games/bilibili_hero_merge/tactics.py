@@ -42,6 +42,14 @@ def load_tactics(path):
     path=Path(path)
     profile=json.loads(path.read_text(encoding='utf-8-sig'))
     catalog=json.loads((Path(__file__).parent/'heroes.json').read_text(encoding='utf-8-sig'))
+    # Co-op lineups may define newly acquired heroes without altering the
+    # shared single-player catalog. Exact OCR names and keywords are required.
+    for key,hero in profile.get('hero_definitions',{}).items():
+        if (not isinstance(hero,dict) or not isinstance(hero.get('name'),str)
+                or not hero['name'] or not isinstance(hero.get('buff_keywords'),list)
+                or any(not isinstance(w,str) or not w for w in hero['buff_keywords'])):
+            raise ValueError('Hero definitions require an exact name and keyword list')
+        catalog[key]=hero
     cfg=compile_tactics(profile,catalog)
     fingerprint=hashlib.sha256(json.dumps(cfg,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     return cfg,fingerprint

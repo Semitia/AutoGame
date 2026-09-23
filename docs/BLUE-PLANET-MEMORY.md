@@ -1,6 +1,6 @@
 # 蔚蓝星球接手备忘
 
-更新：2026-09-20。本文件是精简记忆入口：覆盖更新，不堆操作流水。实时画面/日志优先于历史状态。
+更新：2026-09-22。本文件是精简记忆入口：覆盖更新，不堆操作流水。实时画面/日志优先于历史状态。
 
 ## 用户指引（长期保留）
 - 目标：代理自主经营新号，积累机制与打法，快速提升战力、推进关卡、获得奖励，最终与用户大号打合作。用户指出合作模式是好装备的重要来源；具体解锁条件待实测。
@@ -28,6 +28,8 @@
 - 小炮1→2升级实测24职业材料+10英雄碎片，显示伤害154→169。第2关后解锁招募商城/领地/任务。合作条件、第三关怪物特性仍待查看，不能臆测。
 
 ## 工具/续接（详见TACTICAL-RUNNER.md）
+- **启动入口（用户确认）**：哔哩哔哩 → 左上角头像 → 游戏图标 → 永远的蔚蓝星球；不是独立安装包 com.yydwlxqcy89.cs。进游戏后核对 GameContainerActivity 与 tv.danmaku.bili:web 进程。
+- 2026-09-22只读探测：adb root成功，实际读取4096字节；Unity WebGL/WASM线性内存已用6处静态数据逐字节验证；发现BattleData/currentSummonCount/dicHeroStar名称，尚未解析实时字段。adbd目前保留root；详情见 docs/RUNTIME-DATA-PROBE.md。小号当前端口16416，应动态查询，不复用旧序列号。
 - 大号原入口：`AUTOGAME_RUNTIME=<仓库>/runtime/big-account`、`AUTOGAME_MUMU_INDEX=0`，运行 `python run.py bilibili_hero_merge --device 127.0.0.1:16384 --hide --until-stamina`。Start-Process用隐藏窗口；新号新入口不替代其已验证流程。
 - 小号：`python run.py blue_planet --device emulator-5556 --stage <关卡> --tactics games/bilibili_hero_merge/tactics/beginner.json --start-home --runs 1 --minutes 12`。开局前配置必须匹配实际阵容。
 - 两号设备/运行目录/锁/STOP隔离；启动前查进程，禁止同时控制同一设备；运行时不插入UI动作。恢复只使用同局同阵容state.json。

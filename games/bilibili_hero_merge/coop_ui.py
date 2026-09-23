@@ -63,6 +63,11 @@ class Screen:
     def tap(self, x, y):
         self.platform.tap(round(x*self.width/432), round(y*self.height/768))
 
+    def swipe(self, source, target, duration=650):
+        x1,y1=source; x2,y2=target
+        self.platform.swipe(round(x1*self.width/432),round(y1*self.height/768),
+                            round(x2*self.width/432),round(y2*self.height/768),duration)
+
     def click(self, label):
         self.tap(label.x, label.y)
         time.sleep(.7)

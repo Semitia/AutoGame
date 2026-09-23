@@ -1,0 +1,4 @@
+{"layer":"reward","token":"reward","expected":"close_reward"}
+{"layer":"choice","token":"choice","expected":"choose_buff"}
+{"layer":"battle","prices":{"upgrade":100,"summon":0,"money":0},"cells":[[77,494],[111,494],[146,494]],"occupied":[],"units":[],"summon_count":0,"board_verified":true,"expected":"summon"}
+{"layer":"battle","prices":{"upgrade":100,"summon":10,"money":0},"cells":[[77,494],[111,494],[146,494]],"occupied":[[77,494]],"units":[{"pos":[77,494],"hero":"sea","tier":1}],"summon_count":1,"board_verified":true,"expected":"verified"}

@@ -1,0 +1,55 @@
+{
+  "source": "dual-battle-user.png",
+  "sha256": "1d990dc0730a214cf97c40e43950551610bde5304d536a60946a3db143b78467",
+  "source_size": [
+    1418,
+    1310
+  ],
+  "origin": "User attachment, saved 2026-09-23; historical screenshot, not a live capture",
+  "reference_size": [
+    1080,
+    1920
+  ],
+  "views": {
+    "host": {
+      "crop_xyxy": [
+        6,
+        89,
+        675,
+        1278
+      ],
+      "normalized_file": "dual-battle-host-1080.png"
+    },
+    "guest": {
+      "crop_xyxy": [
+        742,
+        89,
+        1411,
+        1278
+      ],
+      "normalized_file": "dual-battle-guest-1080.png"
+    }
+  },
+  "observed": {
+    "floor": 1,
+    "wave": 7,
+    "left_board": "Seven visibly empty cells; does not establish initial layout or zero lifetime summons",
+    "right_board": "Occupied cells and a bottom extension are visible; hero identities and ranks not verified",
+    "host_prices": {
+      "money": 3800,
+      "upgrade": 600,
+      "summon": 190
+    },
+    "guest_prices": {
+      "money": 5600,
+      "upgrade": 100,
+      "summon": 10
+    }
+  },
+  "limitations": [
+    "Window screenshot with rescaling, not native ADB capture",
+    "No before/after action sequence",
+    "No verified full expansion order",
+    "Do not import this board as current live state"
+  ]
+}

@@ -12,8 +12,8 @@ ROOT=Path(__file__).parent
 class TacticsTests(unittest.TestCase):
     def setUp(self):self.cfg,self.fingerprint=load_tactics(ROOT/'tactics/beginner.json')
     def test_roles_and_slot_order(self):
-        self.assertEqual(self.cfg['buff_priority'],['bomb','archer','ice','athena'])
-        self.assertTrue(self.cfg['heroes']['archer']['keep_if_space'])
+        self.assertEqual(self.cfg['buff_priority'],['knight','bomb','ice','athena'])
+        self.assertTrue(self.cfg['heroes']['knight']['keep_if_space'])
         self.assertEqual(self.cfg['heroes']['ice']['reserve'],2)
     def test_three_support_and_one_damage(self):
         catalog={key:{'name':key,'buff_keywords':[key]} for key in 'abcd'}
@@ -24,7 +24,7 @@ class TacticsTests(unittest.TestCase):
         self.assertEqual(price_action(100,50,self.cfg),'summon')
         self.assertEqual(price_action(100,60,self.cfg),'upgrade')
     def test_protected_carry_does_not_hide_other_merge(self):
-        units={0:{'hero':'bomb','tier':1},1:{'hero':'bomb','tier':1},2:{'hero':'archer','tier':1},3:{'hero':'archer','tier':1}}
+        units={0:{'hero':'bomb','tier':1},1:{'hero':'bomb','tier':1},2:{'hero':'knight','tier':1},3:{'hero':'knight','tier':1}}
         self.assertEqual(merge_pair(units,self.cfg,True),(2,3))
         del units[2];del units[3]
         self.assertIsNone(merge_pair(units,self.cfg,True))
@@ -33,7 +33,7 @@ class TacticsTests(unittest.TestCase):
         self.assertEqual(merge_pair(units,self.cfg),(2,3))
     def test_buff_priority_and_within_hero_order(self):
         self.assertEqual(choose_card(['双重炸弹','分裂炸弹','弹簧箭矢'],self.cfg),1)
-        self.assertEqual(choose_card(['冰爆冻结','弹簧箭矢','祝福'],self.cfg),1)
+        self.assertEqual(choose_card(['冰爆冻结','巨型飞斧','祝福'],self.cfg),1)
         self.assertEqual(choose_card(['未知A','未知B','未知C'],self.cfg),1)
     def test_resume_rejects_wrong_device_stage_tactics_and_settlement(self):
         state={'device':'test','stage':2,'tactics':self.fingerprint,'status':'paused'}
