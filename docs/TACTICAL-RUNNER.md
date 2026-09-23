@@ -4,6 +4,8 @@
 
 ## 指定四个位置
 
+也可双击根目录 `Start-GUI.cmd`，在「主线挑战」中编辑阵容和基本运行参数，自动保存本地方案；详见 [GUI 使用说明](GUI.md)。
+
 编辑 `games/bilibili_hero_merge/tactics/beginner.json`（新号）或复制一份。`veteran.json` 是原大号阵容。`slots` 顺序默认也是角色 buff 优先级；同一英雄内部可设置 `buff_order`。新增英雄只需在 `heroes.json` 加名称和 buff 关键词。
 
 | 字段 | 含义 |
@@ -39,10 +41,10 @@ python run.py blue_planet --device emulator-5556 --stage 2 --tactics games/bilib
 
 `--empty-board` 可从当前关卡空阵容接管。`--stop-on-loss` 可让循环在首次失败后结束。单局是默认行为。循环会返回同关；若首页自动前进一关，尝试可见左箭头选回并重新核对。复杂选关、教程、未知弹窗停止后由上层处理，不盲点。自动后退选关目前需更多实测。
 
-停止：创建 `runtime/bilibili_hero_merge/STOP`；脚本在可确认的战斗画面暂停并保存。再次启动前检查停止原因，确认继续再删除这个文件。手动暂停也会停止脚本。原启动器仍指向旧入口，尚未改成新号入口。
+停止：在实际运行目录创建 `STOP`（未设置 `AUTOGAME_RUNTIME` 时为 `runtime/bilibili_hero_merge/STOP`）；脚本在可确认的战斗画面暂停并保存。再次启动前检查停止原因，确认继续再删除这个文件。手动暂停也会停止脚本。原 `Test-One.cmd` / `Start-Hidden.cmd` 仍指向旧入口；新 `Start-GUI.cmd` 支持选择入口及独立运行目录。
 
 ## 状态与验证边界
 
 每次运行独立写入 `runtime/bilibili_hero_merge/runs/<时间>/`，包含 `events.jsonl`、`state.json`、`latest.png`、抽样和结算图。与旧大号根目录状态隔离，仍共用运行锁防止同时操作。恢复核对设备、关卡、战术指纹，拒绝已结算状态；不得手动改变棋盘后恢复旧状态。战术变更应在下一局使用。
 
-费用以OCR为准；小额战斗币用多裁剪一致性复核，修复90误读9的问题。英雄阶级依赖已验证动作，不是独立视觉模型。不要把单局通过当成长期无人值守已验证。循环次数、体力不足、错误关卡、恢复隔离有单元测试；实战证据与账号状态见 `docs/BLUE-PLANET-MEMORY.md`。
+费用以OCR为准；小额战斗币用多裁剪一致性复核，修复90误读9的问题。英雄阶级优先依赖已验证动作；2026-09-23起，已知英雄的未知阶级默认尝试格内结构识别和头部模板兜底，候选可用于合成。`--no-visual-tiers` 可关闭救急识别；识别不覆盖已有历史阶级，不验证在途动作，日志为 `visual_tier_recovery`。算法不保证准确，接入尚未实战验收。详细讨论、样本和边界见 `docs/HANDOFF-20260923-HERO-GUI-TIER-VISION.md`。不要把单局通过当成长期无人值守已验证。循环次数、体力不足、错误关卡、恢复隔离有单元测试；实战证据与账号状态见 `docs/BLUE-PLANET-MEMORY.md`。

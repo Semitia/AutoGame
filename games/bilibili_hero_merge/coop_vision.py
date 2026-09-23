@@ -81,6 +81,25 @@ class Board:
 
 
 class BoardVision:
+    @staticmethod
+    def consensus(boards, required=()):
+        """Vote only within one input-free burst; never carry old unit states."""
+        cells,occupied,uncertain=set(),set(),set()
+        candidates=set(required).union(*(b.cells | b.uncertain for b in boards))
+        for pos in candidates:
+            empty=sum(pos in b.cells and pos not in b.occupied and pos not in b.uncertain for b in boards)
+            filled=sum(pos in b.occupied and pos not in b.uncertain for b in boards)
+            # A contradictory definite reading may be a moving unit/animation.
+            if empty and filled:
+                uncertain.add(pos)
+            elif max(empty,filled)>=2:
+                cells.add(pos)
+                if filled:occupied.add(pos)
+            elif pos in required or pos in boards[-1].cells:
+                uncertain.add(pos)
+        scores=boards[-1].scores if boards else {}
+        return Board(cells,occupied,uncertain,scores)
+
     def __init__(self):
         root=Path(__file__).with_name('assets')/'coop'
         self.bases=[cv2.imread(str(p),0) for p in sorted(root.glob('base-*.png'))]
@@ -124,7 +143,7 @@ class BoardVision:
 
 
 def owner_side(raw):
-    """Observed red self-name tag vs blue partner tag in both saved views."""
+    """Own name is blue; verified against both devices' lobby identities."""
     im=cv2.resize(raw,(432,768),interpolation=cv2.INTER_AREA)
     votes={}
     for side,x in [('host',104),('guest',332)]:
@@ -134,7 +153,7 @@ def owner_side(raw):
         blue=float(np.mean((h>90)&(h<135)&(s>90)&(v>70)))
         votes[side]=(red,blue)
     if votes['host'][0]>.20 and votes['guest'][1]>.20 and votes['host'][1]<.10:
-        return 'host'
-    if votes['guest'][0]>.20 and votes['host'][1]>.20 and votes['guest'][1]<.10:
         return 'guest'
+    if votes['guest'][0]>.20 and votes['host'][1]>.20 and votes['guest'][1]<.10:
+        return 'host'
     return None

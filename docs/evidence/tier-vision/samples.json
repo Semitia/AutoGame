@@ -1,0 +1,22 @@
+{
+  "images": [
+    {"id":"player-example", "split":"development (also template source)", "file":"player-example.jpg", "pitch":149, "empty_center":[910,420],
+     "cells":[
+       {"center":[165,420],"expected":2}, {"center":[314,420],"expected":1},
+       {"center":[463,420],"expected":4}, {"center":[612,420],"expected":3},
+       {"center":[761,271],"expected":3}, {"center":[910,271],"expected":3},
+       {"center":[1059,271],"expected":3}, {"center":[910,122],"expected":1},
+       {"center":[1059,122],"expected":2}
+     ]},
+    {"id":"independent-battle", "split":"independent screenshot, visually annotated", "file":"independent-battle.png", "pitch":43, "empty_center":[130,603],
+     "cells":[
+       {"center":[87,603],"expected":1}, {"center":[259,560],"expected":2},
+       {"center":[216,603],"expected":1}, {"center":[302,603],"expected":2},
+       {"center":[345,603],"expected":2},
+       {"center":[173,560],"expected":1,"note":"unseen appearance"},
+       {"center":[173,603],"expected":1,"note":"ice mage; previously omitted"},
+       {"center":[259,603],"expected":1,"note":"second cannon; previously omitted"},
+       {"center":[130,603],"expected":null,"note":"empty cell"}
+     ]}
+  ]
+}

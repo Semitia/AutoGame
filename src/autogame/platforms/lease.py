@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[3]
 def assert_no_legacy_controller(device):
     if os.name!='nt':
         return
-    command="Get-CimInstance Win32_Process -Filter \"Name = 'python.exe' OR Name = 'pythonw.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+    command="[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -Filter \"Name = 'python.exe' OR Name = 'pythonw.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
     output=subprocess.check_output(['powershell','-NoProfile','-NonInteractive','-Command',command],
                                    timeout=20,creationflags=subprocess.CREATE_NO_WINDOW)
     rows=json.loads(output.decode('utf-8-sig').strip() or '[]')

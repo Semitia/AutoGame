@@ -2,13 +2,22 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from coop_engine import Observation
 from coop_tracking import Tracker
 from autogame.platforms.lease import device_lease
+from autogame.platforms.lease import assert_no_legacy_controller
 
 
 class TrackingTests(unittest.TestCase):
+    def test_windows_process_scan_explicit_utf8_and_chinese_controller(self):
+        rows=[{'ProcessId':987654, 'CommandLine':'python run.py blue_planet --device 测试设备'}]
+        with patch('autogame.platforms.lease.os.name','nt'), patch('autogame.platforms.lease.subprocess.check_output',return_value=json.dumps(rows,ensure_ascii=False).encode('utf-8-sig')) as run:
+            with self.assertRaisesRegex(RuntimeError,'987654'):
+                assert_no_legacy_controller('测试设备')
+            self.assertIn('[Console]::OutputEncoding',run.call_args.args[0][-1])
+            self.assertIn('UTF8Encoding',run.call_args.args[0][-1])
+
     def setUp(self):
         self.cells={(77,494),(111,494),(146,494)}
         self.tracker=Tracker()
@@ -25,6 +34,17 @@ class TrackingTests(unittest.TestCase):
         p={'kind':'summon','count':0,'occupied':set(),'price':0}
         result=self.tracker.reconcile(self.obs,p,Mock())
         self.assertEqual(result.summon_count,0);self.assertEqual(result.units,{})
+
+    def test_paid_initial_summon_requires_first_wave_and_seven_empty_cells(self):
+        self.obs.cells={(111,460)}|{(x,y) for x in (77,111,146) for y in (494,527)}
+        self.obs.prices['summon']=10
+        with self.assertRaises(ValueError):Tracker().initialize(self.obs)
+        tracker=Tracker();tracker.initialize(self.obs,first_wave=True)
+        self.assertEqual(tracker.summons,0)
+        self.obs.prices['summon']=190
+        with self.assertRaises(ValueError):Tracker().initialize(self.obs,first_wave=True)
+        self.obs.prices['summon']=10;self.obs.occupied={(111,460)}
+        with self.assertRaises(ValueError):Tracker().initialize(self.obs,first_wave=True)
 
     def test_price_change_without_new_unit_does_not_increment(self):
         self.tracker.initialize(self.obs);self.obs.prices['summon']=10

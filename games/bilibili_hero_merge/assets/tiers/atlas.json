@@ -1,0 +1,82 @@
+[
+  {
+    "appearance": "knight",
+    "file": "knight.png",
+    "pitch": 149,
+    "source_box": [
+      279,
+      349,
+      331,
+      402
+    ]
+  },
+  {
+    "appearance": "green_hat",
+    "file": "archer.png",
+    "pitch": 149,
+    "source_box": [
+      877,
+      171,
+      928,
+      220
+    ]
+  },
+  {
+    "appearance": "purple_staff",
+    "file": "athena.png",
+    "pitch": 149,
+    "source_box": [
+      883,
+      48,
+      947,
+      110
+    ]
+  },
+  {
+    "appearance": "red_hair",
+    "file": "bomb.png",
+    "pitch": 149,
+    "source_box": [
+      991,
+      49,
+      1053,
+      116
+    ]
+  },
+  {
+    "appearance": "knight",
+    "file": "knight-side.png",
+    "pitch": 149,
+    "source_box": [
+      108,
+      360,
+      164,
+      415
+    ],
+    "source_scale": 1
+  },
+  {
+    "appearance": "purple_staff",
+    "file": "athena-front.png",
+    "pitch": 149,
+    "source_box": [
+      1007,
+      217,
+      1060,
+      268
+    ],
+    "source_scale": 1
+  },
+  {
+    "appearance": "green_hat",
+    "file": "archer-large.png",
+    "pitch": 149,
+    "source_box": [
+      414,
+      326,
+      498,
+      398
+    ],
+    "source_scale": 1.5
+  }
+]

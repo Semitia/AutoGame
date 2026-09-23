@@ -19,6 +19,7 @@ from coop_engine import Engine, Observation
 from coop_tracking import Tracker
 from coop_vision import BoardVision, read_prices, layer, wave_number, modal_token, BUTTONS, owner_side
 from tactics import load_tactics, choose_card
+from skill_library import record_cards
 
 
 def jsonable(value):
@@ -44,6 +45,14 @@ class Battle:
         self.run_id=uuid.uuid4().hex
         self.resume=None
         self.pending_log=None
+        self.tier_rescue=None
+        self.last_tier_rescue=-1000
+        self.tier_vision=None
+        if getattr(args,'trace_tiers',False):
+            from tier_vision import TierVision, TierConsensus
+            self.tier_vision=TierVision()
+            self.tier_consensus=TierConsensus()
+            self.tier_cursor=0
         self.state_path=self.s.output/'state.json'
         path=getattr(args,side+'_state',None)
         if path:
@@ -92,8 +101,22 @@ class Battle:
         if owner_side(self.s.raw)!=self.side:
             self.log('device_side_mismatch',expected=self.side,observed=owner_side(self.s.raw))
             return Observation('unknown')
-        prices,texts=read_prices(self.s.reader,self.s.raw)
         board=self.vision.read(self.s.raw,self.side)
+        if not board.verified or not self.tracker.cells <= board.cells:
+            # Transient effects should trigger a short observation burst, not
+            # immediate loss of the whole board. No inputs occur in this burst.
+            boards=[board]
+            for index in range(2):
+                if self.stop():return Observation('unknown')
+                time.sleep(.15)
+                if index==0:self.s.shot()
+                else:self.s.scan()
+                boards.append(self.vision.read(self.s.raw,self.side))
+            top=self.top()
+            if top!='battle':return Observation(top,token=modal_token(self.s.labels))
+            if owner_side(self.s.raw)!=self.side:return Observation('unknown')
+            board=self.vision.consensus(boards,self.tracker.cells)
+        prices,texts=read_prices(self.s.reader,self.s.raw)
         # Reject dimmed background UI under an unrecognized overlay.
         bright=float(self.s.raw[1780:1900,300:420].mean())>65
         obs=Observation('battle',prices=prices,cells=board.cells,occupied=board.occupied,
@@ -101,6 +124,16 @@ class Battle:
         self.log('observation',prices=prices,texts=texts,cells=sorted(board.cells),
                  occupied=sorted(board.occupied),uncertain=sorted(board.uncertain),
                  board_verified=obs.board_verified)
+        if self.tier_vision and obs.board_verified and board.occupied:
+            # Advisory evidence only. Never replace tracker tiers or bypass
+            # the existing merge verification on experimental visual scores.
+            positions=sorted(board.occupied)
+            pos=positions[self.tier_cursor % len(positions)];self.tier_cursor+=1
+            estimate=self.tier_vision.estimate(self.s.raw,(pos[0]*2.5,pos[1]*2.5),34.5*2.5)
+            stable=self.tier_consensus.observe(pos,estimate)
+            self.log('visual_tier_candidate',cell=pos,stable_tier=stable,**estimate.as_dict())
+        elif self.tier_vision:
+            self.tier_consensus.clear()
         return obs
 
     def identify(self,pos):
@@ -142,6 +175,28 @@ class Battle:
         self.last_board=signature
         return stable
 
+    def recover_tiers(self,obs,pending):
+        if getattr(self.args,'no_visual_tiers',False) or pending:return False
+        if not any(u.get('tier',0)==0 and not u.get('uncertain') for u in obs.units.values()):return False
+        if time.monotonic()-self.last_tier_rescue<15:return False
+        self.last_tier_rescue=time.monotonic()
+        # restore()/identify() opened details; acquire an unobstructed frame.
+        self.s.scan()
+        if self.top()!='battle' or owner_side(self.s.raw)!=self.side:return True
+        board=self.vision.read(self.s.raw,self.side)
+        if not board.verified or board.cells!=obs.cells or board.occupied!=obs.occupied:return True
+        if self.tier_rescue is None:
+            from tier_rescue import TierRescue
+            self.tier_rescue=TierRescue()
+        import cv2
+        image=cv2.resize(self.s.raw,(432,768),interpolation=cv2.INTER_AREA)
+        if self.tier_rescue.recover(image,obs.cells,obs.occupied,obs.units,34.5,self.log):
+            self.tracker.commit(obs)
+            self.save()
+        # Let the next step re-read modals/prices after potentially slow vision.
+        self.last_board=None
+        return True
+
     def step(self):
         obs=self.observe()
         if self.stop():return self.halt('stop_requested')
@@ -149,7 +204,10 @@ class Battle:
         # Bound unknown/OCR/animation waiting without dispatching any inputs.
         if obs.layer=='unknown' or not self.ready_observation(obs):
             if self.invalid_since is None:self.invalid_since=time.monotonic()
-            if time.monotonic()-self.invalid_since>20:
+            # Recognized battle effects are allowed to clear; unknown screens
+            # retain the shorter stop bound and all waits obey the run deadline.
+            limit=60 if obs.layer=='battle' else 20
+            if time.monotonic()-self.invalid_since>limit:
                 return self.halt('observation_did_not_stabilize')
             return True
         self.invalid_since=None
@@ -162,11 +220,12 @@ class Battle:
                 self.tracker.restore(self.resume,obs,self.identify)
                 self.resume=None
             elif self.tracker.summons is None:
-                self.tracker.initialize(obs)
+                self.tracker.initialize(obs, first_wave=current_wave==1 or getattr(self.args,'adopt_empty',False))
             pending=self.engine.pending
             while pending and pending['kind'] in ('close_reward','choose_buff'):
                 pending=pending['previous']
             obs=self.tracker.reconcile(obs,pending,self.identify)
+            if self.recover_tiers(obs,pending):return True
             self.tracker.wave=current_wave
             if self.tracker.summons==0 and not self.engine.pending:
                 self.tracker.commit(obs)
@@ -185,6 +244,7 @@ class Battle:
             self.capture('verified')
             self.pending_log=None
         elif kind not in ('wait',):
+            if self.tier_vision:self.tier_consensus.clear()
             if obs.layer=='battle' and self.engine.pending:
                 # Retain the before state until the engine confirms its delta.
                 self.tracker.cells=set(obs.cells)
@@ -196,6 +256,7 @@ class Battle:
             if kind=='choose_buff':
                 cards=[self.s.reader.lines(self.s.raw,(a,510,b,1160))
                        for a,b in [(30,356),(375,703),(725,1050)]]
+                record_cards(cards,self.cfg)
                 words=[w for h in self.cfg['heroes'].values() for w in [h['name'],*h['buff_keywords']]]
                 if not any(w in t for t in cards for w in words):
                     return self.halt('tactics_do_not_match_cards')
@@ -264,6 +325,9 @@ def main():
     p.add_argument('--host-name',default='踏实的龙利鱼');p.add_argument('--guest-name',default='幽美的竹笋')
     p.add_argument('--stage',type=int,default=2);p.add_argument('--minutes',type=float,default=20)
     p.add_argument('--battle-only',action='store_true')
+    p.add_argument('--adopt-empty',action='store_true',help='Explicitly adopt an untouched seven-cell empty board with initial price 10')
+    p.add_argument('--trace-tiers',action='store_true',help='Log experimental visual tier candidates; never authorize merges from them')
+    p.add_argument('--no-visual-tiers',action='store_true',help='Disable best-effort rank recovery for unknown checkpoint ranks')
     p.add_argument('--only-side',choices=('host','guest'))
     p.add_argument('--host-tactics',type=Path);p.add_argument('--guest-tactics',type=Path)
     p.add_argument('--host-state',type=Path);p.add_argument('--guest-state',type=Path)
@@ -274,6 +338,7 @@ def main():
         inspect_image(a.inspect_image,a.only_side or 'host',a.runtime)
         return
     if a.only_side and not a.battle_only:p.error('--only-side requires --battle-only')
+    if a.adopt_empty and not a.battle_only:p.error('--adopt-empty requires --battle-only')
     if (a.host_state or a.guest_state) and not a.battle_only:p.error('Checkpoint restore requires --battle-only')
     selected=[(side,getattr(a,side+'_device')) for side in ('host','guest') if not a.only_side or a.only_side==side]
     for side,device in selected:

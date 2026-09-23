@@ -1,0 +1,2 @@
+# Qt Widgets desktop client (Essentials avoids the unused QtWebEngine package).
+PySide6-Essentials==6.11.2

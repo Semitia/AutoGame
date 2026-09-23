@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import cv2
 import numpy as np
-from coop_vision import BoardVision,layer,read_prices,owner_side,wave_number
+from coop_vision import Board,BoardVision,layer,read_prices,owner_side,wave_number
 from coop_ui import Label
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -12,6 +12,26 @@ RIGHT={(320,460),(355,460),(320,562)}|{(x,y) for x in (285,320,355) for y in (49
 
 
 class VisionTests(unittest.TestCase):
+    def test_short_occlusion_burst_recovers_only_consistent_cells(self):
+        cells=set(LEFT);positions=sorted(cells);unit=positions[0]
+        frames=[]
+        for hidden in positions[1:4]:
+            frames.append(Board(cells-{hidden},{unit},{hidden},{}))
+        result=BoardVision.consensus(frames,cells)
+        self.assertTrue(result.verified)
+        self.assertEqual(result.cells,cells)
+        self.assertEqual(result.occupied,{unit})
+        # Conflicting occupied/empty reads must not justify a merge.
+        frames[-1].occupied.clear()
+        self.assertFalse(BoardVision.consensus(frames,cells).verified)
+
+    def test_burst_does_not_reuse_missing_historical_cells(self):
+        cells=set(LEFT);missing=next(iter(cells));remaining=cells-{missing}
+        frames=[Board(remaining,set(),set(),{}) for _ in range(3)]
+        result=BoardVision.consensus(frames,cells)
+        self.assertFalse(result.verified)
+        self.assertIn(missing,result.uncertain)
+
     @classmethod
     def setUpClass(cls):cls.vision=BoardVision()
 
@@ -32,7 +52,9 @@ class VisionTests(unittest.TestCase):
             image=cv2.imread(str(ROOT/f'docs/evidence/coop-20260923/dual-battle-{view}-1080.png'))
             self.assertEqual(layer(labels,'踏实的龙利鱼','幽美的竹笋',1),'battle')
             self.assertEqual(layer(labels,'踏实的龙利鱼','幽美的竹笋',2),'unknown')
-            self.assertEqual(owner_side(image),view)
+            # Historical screenshot filenames were assigned using the incorrect
+            # red=self assumption; live device/lobby evidence corrects this.
+            self.assertEqual(owner_side(image),'guest' if view=='host' else 'host')
             self.assertEqual(wave_number(labels),7)
 
     def test_rescaled_native_screenshot(self):
@@ -40,6 +62,15 @@ class VisionTests(unittest.TestCase):
         native=cv2.resize(image,(1440,2560))
         result=self.vision.read(native,'guest')
         self.assertTrue(result.verified);self.assertEqual(result.cells,RIGHT)
+
+    def test_live_device_identity_blue_is_self(self):
+        for side,device in [('host','5556'),('guest','5554')]:
+            image=cv2.imread(str(ROOT/f'docs/evidence/coop-20260923-live/{side}-emulator-{device}.png'))
+            self.assertEqual(owner_side(image),side)
+            board=self.vision.read(image,side)
+            self.assertTrue(board.verified)
+            self.assertEqual(len(board.cells),7)
+            self.assertEqual(board.occupied,set())
 
     def test_reward_image_not_a_board(self):
         image=cv2.imread(str(ROOT/'docs/evidence/coop-20260923/reward-over-choice.png'))

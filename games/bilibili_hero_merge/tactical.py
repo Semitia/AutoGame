@@ -9,6 +9,7 @@ import sys
 import time
 from strategic import StrategicBot, ROOT, RUNTIME, cv2
 from tactics import load_tactics, choose_card
+from skill_library import record_cards
 from vision import Reader
 from autogame.platforms.lease import device_lease
 
@@ -43,6 +44,8 @@ class TacticalBot(StrategicBot):
         self.completed = 0
         self.status = 'active'
         self.rounds = 0
+        self.tier_rescue=None
+        self.last_tier_rescue=-1000
         if args.resume_state:
             state = json.loads(Path(args.resume_state).read_text(encoding='utf-8-sig'))
             self.validate_resume(state, args.device, self.stage, self.fingerprint)
@@ -135,9 +138,25 @@ class TacticalBot(StrategicBot):
             if old['empty_checks']>=2:self.units.pop(pos)
         self.save();return True
 
+    def recover_tiers(self):
+        if getattr(self.args,'no_visual_tiers',False) or self.pending_action:return
+        if not any(u.get('tier',0)==0 and not u.get('uncertain') for u in self.units.values()):return
+        if time.monotonic()-self.last_tier_rescue<15:return
+        self.last_tier_rescue=time.monotonic()
+        if self.tier_rescue is None:
+            from tier_rescue import TierRescue
+            self.tier_rescue=TierRescue()
+        occupied={p for p in self.available if self.occupied(*p)}
+        changed=self.tier_rescue.recover(self.im,self.available,occupied,self.units,43,self.log)
+        if changed:self.save()
+        # Recognition takes time; refresh before the ordinary action policy.
+        self.shot()
+        return True
+
     def choose_buff(self,extra=False):
         cards=[self.reader.lines(self.raw,(x1,510,x2,1160))
                for x1,x2 in [(30,356),(375,703),(725,1050)]]
+        record_cards(cards,self.cfg)
         index=choose_card(cards,self.cfg)
         self.log('buff_choice',cards=cards,selected=index,extra=extra)
         self.tap([77,216,355][index],340);time.sleep(.4)
@@ -161,6 +180,7 @@ class TacticalBot(StrategicBot):
         self.save();self.log('stopped',reason=reason,status=self.status,state=str(self.state_path))
 
     def reset_board(self):
+        self.tier_rescue=None;self.last_tier_rescue=-1000
         self.units={};self.available={(x,603) for x in [87,130,173,216,259,302,345]}
         self.summons=0;self.pending_action=None;self.blocked_pairs={};self.bad_prices=0
         self.repair_mode=False;self.repair_due={};self.last_repair=0
@@ -280,6 +300,8 @@ class TacticalBot(StrategicBot):
                 self.tap(15,400);time.sleep(.4);continue
             if self.battle():
                 unknown=0
+                # Re-enter the full modal dispatch after potentially slow vision.
+                if self.recover_tiers():continue
                 if not self.decide():return
             else:
                 if self.close_unit_details():
@@ -306,6 +328,7 @@ def main():
     count.add_argument('--runs',type=int,default=1)
     count.add_argument('--until-stamina',action='store_true')
     parser.add_argument('--stop-on-loss',action='store_true')
+    parser.add_argument('--no-visual-tiers',action='store_true',help='Disable best-effort rank recovery for known heroes with unknown ranks')
     args=parser.parse_args()
     if args.stage<1 or args.minutes<=0 or args.runs<1:parser.error('stage, minutes and runs must be positive')
     args.resume=False;args.hide=False

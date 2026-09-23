@@ -30,8 +30,34 @@ def make_bot(output):
 
 
 class CoOpAdapterTests(unittest.TestCase):
+    def test_visual_recovery_commits_unknown_ranks_then_reobserves(self):
+        pos=(77,494)
+        obs=Observation('battle',cells=CELLS,occupied={pos},units={pos:{'hero':'snow','tier':0}},
+                        prices={'upgrade':100,'summon':80,'money':300},summon_count=5,board_verified=True)
+        self.bot.top=Mock(return_value='battle')
+        self.bot.vision.read=Mock(return_value=SimpleNamespace(verified=True,cells=CELLS,occupied={pos}))
+        self.bot.tier_rescue=Mock()
+        def recover(image,cells,occupied,units,pitch,log):
+            self.assertEqual(pitch,34.5)
+            units[pos].update(tier=2,tier_source='visual:structure')
+            return 1
+        self.bot.tier_rescue.recover.side_effect=recover
+        with patch('coop.owner_side',return_value='host'):
+            self.assertTrue(self.bot.recover_tiers(obs,None))
+        self.assertEqual(self.bot.tracker.units[pos]['tier'],2)
+        self.bot.s.tap.assert_not_called();self.bot.s.swipe.assert_not_called()
+        self.assertIsNone(self.bot.last_board)
+
+    def test_visual_recovery_never_resolves_pending_action(self):
+        self.bot.tier_rescue=Mock()
+        obs=Observation('battle',units={(77,494):{'hero':'snow','tier':0}})
+        self.assertFalse(self.bot.recover_tiers(obs,{'kind':'merge'}))
+        self.bot.tier_rescue.recover.assert_not_called()
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        recorder=patch('coop.record_cards')
+        self.record_cards=recorder.start();self.addCleanup(recorder.stop)
         self.bot=make_bot(self.temp.name)
         self.cfg=load_tactics(PROFILE)[0]
 
@@ -46,6 +72,7 @@ class CoOpAdapterTests(unittest.TestCase):
         self.bot.observe=Mock(return_value=Observation('choice'))
         self.bot.s.reader.lines.side_effect=['熊熊烈火','地鼠接龙','雷电分身']
         self.assertFalse(self.bot.step());self.bot.s.tap.assert_not_called()
+        self.record_cards.assert_called_once_with(['熊熊烈火','地鼠接龙','雷电分身'], self.bot.cfg)
 
     def test_native_input_scaling(self):
         screen=Screen.__new__(Screen);screen.platform=Mock();screen.width=1440;screen.height=2560

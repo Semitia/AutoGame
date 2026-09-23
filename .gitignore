@@ -1,5 +1,8 @@
 # Machine-local configuration and credentials
 /config/local.json
+/config/gui*.json
+/config/hero-skills.sqlite3*
+/config/tactics/
 .env
 .env.*
 !.env.example

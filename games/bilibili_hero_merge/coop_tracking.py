@@ -10,11 +10,12 @@ class Tracker:
         self.prices={}
         self.wave=None
 
-    def initialize(self, obs):
+    def initialize(self, obs, first_wave=False):
         # An empty board alone does NOT mean a fresh run: the saved screenshot
         # has an empty host board but a summon price of 190.
-        if not obs.board_verified or obs.occupied or obs.prices.get('summon')!=0:
-            raise ValueError('Fresh start requires a verified empty board and free summon; otherwise use a same-battle checkpoint')
+        initial_price = obs.prices.get('summon') == 0 or (first_wave and len(obs.cells)==7 and obs.prices.get('summon')==10)
+        if not obs.board_verified or obs.occupied or not initial_price:
+            raise ValueError('Fresh start requires a verified empty board and free summon, or wave 1 with seven empty cells and summon price 10; otherwise use a same-battle checkpoint')
         self.summons=0
         self.cells=set(obs.cells)
 
