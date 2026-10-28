@@ -14,6 +14,7 @@ from test_workbench import catalog,stage
 class SearchTests(unittest.TestCase):
     def test_search_keeps_legal_plans_and_validates_on_other_seeds(self):
         c=catalog();c.stages=[]
+        c.name=lambda uid,evo=1:str(uid)
         s=stage();s['stage']=dict(ID=1,DisplayName='1-1')
         class Oracle:
             catalog=c

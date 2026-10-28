@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-10-28",
+  "policy": "作者经验是弱先验。只有核验过图像/正文的条目参与生成候选；按当前养成重新模拟。未观看视频不提取阵容。",
+  "sources": [
+    {
+      "id": "pig-ch11",
+      "author": "猪猪骑士及帖中贡献者",
+      "title": "第11章低氪推图站位（已完结）",
+      "url": "https://www.taptap.cn/moment/849692682207889110",
+      "published": "2026-09-22",
+      "access": "正文及阵容图片已核验；评论未批量读取",
+      "version": "截图版本未确认，不能等同于本机0.50.1"
+    },
+    {
+      "id": "water-guide",
+      "author": "一瓶矿泉水oO；TataDex授权整理",
+      "title": "萌新养成一站式攻略1.0",
+      "url": "https://tatadex.org/zh/blog/a-bottle-of-mineral-water-beginner-guide-s1/",
+      "published": "2026-09-12",
+      "version": "S1；页面注明2026-08-26平衡、09-17核验",
+      "access": "正文及两张核心组合图已核验",
+      "notes": ["骨鱼与猫冰、螳螂与葵花可作为路线组合候选", "角色形态和职责比稀有度排名更重要；低阶宠物也可能补足功能"]
+    },
+    {
+      "id": "ch9",
+      "author": "追觅",
+      "title": "第九章0氪非boss关卡攻略",
+      "url": "https://www.taptap.cn/moment/854315941566088518",
+      "access": "正文含16张阵容图；只核验首图，9-6游戏标题与1-5覆盖标注矛盾，未按关卡导入"
+    },
+    {
+      "id": "ch8",
+      "author": "追觅",
+      "title": "第八章低练度0氪非boss关卡",
+      "url": "https://www.taptap.cn/moment/851786936577166310",
+      "access": "已定位图集，尚未逐图转录"
+    },
+    {
+      "id": "ch7",
+      "author": "追觅",
+      "title": "第7章低练度0氪非boss关卡攻略",
+      "url": "https://www.taptap.cn/moment/849189578576235526",
+      "access": "已定位图集，尚未逐图转录"
+    },
+    {
+      "id": "bili-water",
+      "author": "一瓶矿泉水oO",
+      "title": "主线40章整章作业参考／新版推关合集",
+      "url": "https://www.bilibili.com/video/BV12ctC6zEDN/",
+      "access": "搜索索引可读，列出31-41章相关分集；正文412，未观看或提取视频阵容"
+    },
+    {
+      "id": "douyin-11-26",
+      "author": "塔塔冒险队言午",
+      "title": "11-23和11-26零氪阵容",
+      "url": "https://www.douyin.com/video/7691118492031946034",
+      "published": "2026-09-30",
+      "access": "仅核验标题与作者，未读取视频，不参与候选"
+    }
+  ],
+  "formations": [
+    {
+      "id": "pig-11-11",
+      "source": "pig-ch11",
+      "stage": "11-11",
+      "observed_level": 199,
+      "image": "https://img2-tc.tapimg.com/moment/etag/Fsmc7SBQXmxBeNKGerBJg7YMZXPq_20260919202931.png/_tap_ugc.jpg",
+      "status": "头像人工比对本机图鉴；部署坐标按五行五列转录；各宠星级/形态未全部确认",
+      "rows_front_to_back": [[0,14,0,0,0],[31,25,18,42,15],[21,19,13,40,30],[11,0,3,17,20],[0,0,0,0,0]]
+    },
+    {
+      "id": "pig-11-21",
+      "source": "pig-ch11",
+      "stage": "11-21",
+      "observed_level": 199,
+      "image": "https://img2-tc.tapimg.com/moment/etag/FsyHW1RiKNxWSVJz6tcZL__cph_f_20260919205150.png/_tap_ugc.jpg",
+      "status": "头像人工比对本机图鉴；部署坐标按五行五列转录；各宠星级/形态未全部确认",
+      "rows_front_to_back": [[0,0,12,0,0],[11,14,27,18,15],[0,55,40,0,25],[0,24,17,13,0],[6,3,0,0,20]]
+    }
+  ]
+}

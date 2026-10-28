@@ -260,7 +260,7 @@ class MainlinePanel:
         entry=ttk.Entry(toolbar,textvariable=self.stage_query,width=12); entry.pack(side='left',padx=6)
         entry.bind('<Return>',lambda _:self.guard(self.load_stage))
         ttk.Button(toolbar,text='加载',command=lambda:self.guard(self.load_stage)).pack(side='left')
-        ttk.Button(toolbar,text='一键候选',command=lambda:self.guard(self.plan)).pack(side='left',padx=6)
+        ttk.Button(toolbar,text='旧启发式候选',command=lambda:self.guard(self.plan)).pack(side='left',padx=6)
         self.candidate_box=ttk.Combobox(toolbar,state='readonly',width=18); self.candidate_box.pack(side='left')
         self.candidate_box.bind('<<ComboboxSelected>>',lambda _:self.choose_candidate(self.candidate_box.current()))
         ttk.Button(toolbar,text='保存布阵',command=lambda:self.guard(self.save_plan)).pack(side='right')
@@ -268,12 +268,17 @@ class MainlinePanel:
         actions=ttk.Frame(parent);actions.pack(fill='x',pady=(0,8))
         self.sim_button=ttk.Button(actions,text='模拟当前布阵',command=lambda:self.guard(lambda:self.run_local(False)))
         self.sim_button.pack(side='left',padx=(0,6))
-        self.search_button=ttk.Button(actions,text='搜索阵容与站位',command=lambda:self.guard(lambda:self.run_local(True)))
+        self.search_button=ttk.Button(actions,text='经验搜索阵容',command=lambda:self.guard(lambda:self.run_local(True)))
         self.search_button.pack(side='left',padx=(0,6))
         ttk.Label(actions,text='预算').pack(side='left');ttk.Entry(actions,textvariable=self.search_budget,width=5).pack(side='left',padx=(4,10))
         ttk.Button(actions,text='打开模拟方案',command=lambda:self.guard(self.open_simulation)).pack(side='left',padx=5)
         ttk.Button(actions,text='播放 / 暂停回放',command=lambda:self.guard(self.toggle_replay)).pack(side='left',padx=5)
         ttk.Checkbutton(actions,text='显示布阵格',variable=self.show_grid,command=lambda:self.board.draw()).pack(side='left',padx=8)
+        learning=ttk.Frame(parent);learning.pack(fill='x',pady=(0,6))
+        self.learning_status=tk.StringVar(value='搜索自动复用本机经验；玩家攻略是弱先验，按当前角色池重新模拟。')
+        ttk.Label(learning,textvariable=self.learning_status,style='Hint.TLabel').pack(side='left')
+        ttk.Button(learning,text='记实战未通过',command=lambda:self.guard(lambda:self.record_battle_feedback(False))).pack(side='right')
+        ttk.Button(learning,text='记实战通过',command=lambda:self.guard(lambda:self.record_battle_feedback(True))).pack(side='right',padx=6)
         content=ttk.Frame(parent); content.pack(fill='both',expand=True)
         left=ttk.Frame(content); left.pack(side='left',fill='both',expand=True,padx=(0,10)); self.filters(left)
         ttk.Label(left,text='拖卡片上阵 · 地图内拖动交换位置 · 拖回卡片区下阵',foreground=ACCENT).pack(anchor='w',pady=8)
@@ -326,7 +331,8 @@ class MainlinePanel:
             v=candidate['evaluation'];validation=candidate.get('validation',[])
             text=f'原始 Lua 模拟：{"通过" if v["won"] else "未通过"}，击杀 {v["kills"]}/{v["total_enemies"]}，{v["battle_secs"]:.1f}s。'
             if validation:text+=f'独立种子通过 {sum(x["won"] for x in validation)}/{len(validation)}。'
-            self.reason.set(text+'待实战校准；不是通关保证。')
+            explanations=candidate.get('explanations',[])
+            self.reason.set(text+'待实战校准；不是通关保证。'+ ('\n'+'\n'.join(explanations) if explanations else ''))
         else:self.reason.set('候选偏好分不是胜率；位置尚未优化，可拖动调整。星级、属性评级与技能暂未参与评分。')
         self.refresh()
     def save_plan(self):
@@ -360,7 +366,11 @@ class MainlinePanel:
         script='search_policy.py' if search else 'combat.py'
         args=[sys.executable,'-X','utf8',str(Path(__file__).with_name(script)),
               '--capture',str(job/'capture.json'),'--stage',str(self.stage_data['stage']['ID']),'--out',str(self.combat_output)]
-        if search:args+=['--budget',str(budget)]
+        if search:
+            args+=['--budget',str(budget)]
+            if self.placements:
+                write_json(job/'plan.json',dict(placements=[dict(unit_id=uid,x=x,y=y) for (x,y),uid in self.placements.items()]))
+                args+=['--initial',str(job/'plan.json')]
         else:
             write_json(job/'plan.json',dict(placements=[dict(unit_id=uid,x=x,y=y) for (x,y),uid in self.placements.items()]))
             args+=['--plan',str(job/'plan.json')]
@@ -401,12 +411,36 @@ class MainlinePanel:
         for p in report['placements']:board=move_unit(stage,self.pets,board,p['unit_id'],(p['x'],p['y']))
         self.stage_query.set(str(report['stage_id']));self.load_stage()
         mode=report.get('mode','original-lua-simulation')
-        candidates=report.get('finalists') or [dict(placements=report['placements'],evaluation=report['evaluation'],score=report['evaluation']['score'])]
+        candidates=report.get('finalists') or [dict(placements=report['placements'],evaluation=report['evaluation'],score=report['evaluation']['score'],explanations=report.get('explanations',[]))]
         self.candidates=[dict(c,mode=mode,simulated=True) for c in candidates]
         self.candidate_box['values']=[f'模拟候选 {i+1}' for i in range(len(candidates))]
         self.candidate_box.current(0);self.choose_candidate(0)
         self.current_report=report;self.replay_index=0
+        memory=report.get('experience',{});stats=memory.get('after',{})
+        if memory.get('enabled'):
+            self.learning_status.set(f'本机经验 {stats.get("battles",0)} 局 · 偏好学习 {stats.get("preference_updates",0)} 对 · 本次复用 {len(memory.get("retrieved",[]))} 个历史方案')
+        else:self.learning_status.set('此方案未启用持久学习；仍可查看模拟结果。')
         self.status.set('已载入模拟方案与回放。待实战核对，尚未保证通关。')
+
+    def record_battle_feedback(self,won,path=None):
+        from experience import Experience,DEFAULT_PATH,stable_hash
+        report=self.current_report
+        if not report or not report.get('engine_fingerprint') or not report.get('context'):
+            raise ValueError('请先搜索并打开新版方案，再在游戏试打后记录结果')
+        if {(p['x'],p['y']):p['unit_id'] for p in report['placements']}!=self.placements:
+            raise ValueError('已切换或调整阵容，请先模拟当前布阵，不能把结果记到原方案')
+        rows=[]
+        for pet in sorted(self.pets,key=lambda p:p['unit_id']):
+            observed=pet.get('game_observed',{})
+            if any(observed.get(k)!=v for k,v in [('tid',pet['unit_id']),('evoTID',pet['evolution']),('starLv',pet['stars']),('level',int(self.level.get()))]):
+                raise ValueError('当前角色池已修改，请重新同步与搜索后记录')
+            rows.append({k:v for k,v in observed.items() if k!='captured_at'})
+        if stable_hash(rows)!=report['context']['roster_hash'] or self.stage_data['stage']['ID']!=report['stage_id']:
+            raise ValueError('角色池或关卡与报告不符，请重新搜索后记录')
+        memory=Experience(path or DEFAULT_PATH)
+        try:memory.record_feedback(report['engine_fingerprint'],report['context_hash'],report['placements'],won)
+        finally:memory.close()
+        self.status.set('已记玩家实战反馈：'+('通过' if won else '未通过')+'。将影响下次历史方案选择；不会冒充模拟校准。')
 
     def toggle_replay(self):
         if not self.current_report or not self.current_report['evaluation'].get('frames'):raise ValueError('请先模拟或打开带回放的方案')

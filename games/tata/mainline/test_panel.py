@@ -11,6 +11,32 @@ from test_live_roster import capture
 
 @unittest.skipUnless((DATA/'Config/Unit.json').exists() and (DATASET/'stages.json').exists(), 'Local extracted data required')
 class PanelIntegrationTests(unittest.TestCase):
+    def test_feedback_keeps_real_reports_separate_and_rejects_changed_plan_or_growth(self):
+        from experience import Experience,stable_hash
+        catalog=Catalog();source=capture()
+        with tempfile.TemporaryDirectory() as directory:
+            folder=Path(directory);root=tk.Tk();root.withdraw()
+            try:
+                app=MainlinePanel(root,catalog,folder/'roster.json');app.apply_live_capture(source)
+                plan=[dict(unit_id=1,x=3,y=1)]
+                report=dict(simulated=True,stage_id=1,placements=plan,engine_fingerprint='ui-test',
+                    context_hash='ui-context',context=dict(roster_hash=stable_hash(source['pets'])),
+                    evaluation=dict(won=False,kills=1,total_enemies=2,battle_secs=10,score=1),
+                    experience=dict(enabled=True,after=dict(battles=4,preference_updates=2),retrieved=[]))
+                from model import write_json
+                write_json(folder/'report.json',report);app.load_simulation(folder/'report.json')
+                app.record_battle_feedback(True,folder/'memory.sqlite3')
+                memory=Experience(folder/'memory.sqlite3')
+                try:
+                    self.assertEqual(memory.stats('ui-test')['user_reports'],1)
+                    self.assertEqual(memory.stats('ui-test')['battles'],0)
+                finally:memory.close()
+                app.placements={(3,2):1}
+                with self.assertRaises(ValueError):app.record_battle_feedback(False,folder/'memory.sqlite3')
+                app.placements={(3,1):1};app.level.set('235')
+                with self.assertRaises(ValueError):app.record_battle_feedback(False,folder/'memory.sqlite3')
+            finally:root.destroy()
+
     def test_live_sync_keeps_notes_backup_and_rejects_bad_capture(self):
         catalog=Catalog()
         with tempfile.TemporaryDirectory() as directory:
