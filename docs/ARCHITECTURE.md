@@ -12,6 +12,8 @@
 
 `run.py` 通过显式游戏注册表分发。当前游戏仍直接使用 MuMu 适配器以及 Windows 文件锁；这次迁移没有宣称已完成跨平台通用调度器。
 
+`games/tata/` 按游戏组织 Windows 微信里的塔塔冒险队功能，当前 `fishing/` 提供钓鱼控制面板、视觉识别和预判输入。`python run.py tata fishing` 由游戏入口分发到该子功能；运行产物统一写入 `runtime/tata/fishing/`，识别模板与测试截图保留在功能目录。现有 `Start-Fishing.cmd` / `Stop-Fishing.cmd` 是该功能的桌面入口。
+
 ## 添加游戏
 
 1. 建立独立 `games/<game_id>/`，添加识别模板、策略配置、状态机和测试。

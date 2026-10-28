@@ -19,6 +19,8 @@
 **/runner.lock
 **/STOP
 *.log
+*.dmp
+*.stackdump
 
 # Local Python installation, downloaded models and dependencies
 /.local/
@@ -32,6 +34,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 build/
 dist/
@@ -42,4 +46,5 @@ dist/
 .DS_Store
 Thumbs.db
 Desktop.ini
-# Game assets and curated evidence under assets/ remain tracked.
+# Game recognition assets and regression screenshots under games/**/testdata/
+# remain tracked. Keep ad-hoc captures, samples and recordings under /runtime/.

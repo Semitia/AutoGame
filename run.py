@@ -7,7 +7,8 @@ import sys
 ROOT=Path(__file__).resolve().parent
 GAMES={'bilibili_hero_merge': ROOT/'games/bilibili_hero_merge/strategic.py',
        'blue_planet': ROOT/'games/bilibili_hero_merge/tactical.py',
-       'bilibili_hero_merge_coop': ROOT/'games/bilibili_hero_merge/coop.py'}
+       'bilibili_hero_merge_coop': ROOT/'games/bilibili_hero_merge/coop.py',
+       'tata': ROOT/'games/tata/run.py'}
 
 def main():
     parser=argparse.ArgumentParser(description='AutoGame game runner')

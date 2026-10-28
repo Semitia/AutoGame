@@ -1,8 +1,9 @@
 # AutoGame
 
-以截图、输入和可恢复状态驱动的游戏自动化项目。目前实现 **MuMu +《永远的蔚蓝星球》**，保留旧目录标识 `bilibili_hero_merge`。原大号第34关入口继续可用，新增 `blue_planet` 四位置战术入口。
+以截图、输入和可恢复状态驱动的游戏自动化项目。目前包含 **MuMu +《永远的蔚蓝星球》** 和 **Windows 微信 + Tata（塔塔冒险队）**。蔚蓝星球保留旧目录标识 `bilibili_hero_merge`，原大号第34关入口继续可用，并提供 `blue_planet` 四位置战术入口。
 
 - [双人合作：单局候选版，待实战验收](games/bilibili_hero_merge/COOP.md)
+- [Tata 游戏功能与钓鱼工具](games/tata/README.md)
 - [游戏接手备忘](docs/BLUE-PLANET-MEMORY.md)
 - [四位置战术与单局/循环](docs/TACTICAL-RUNNER.md)
 - [本轮工作总结](docs/SESSION-2026-09-18.md)
@@ -11,6 +12,8 @@
 - [当前游戏策略](games/bilibili_hero_merge/README.md)
 
 ## 环境与启动
+
+**Tata 自动钓鱼：双击 `Start-Fishing.cmd` 打开启停面板。** 先在电脑微信里打开「塔塔冒险队 → 钓鱼大赛」；命令行入口为 `python run.py tata fishing`，详见 [Tata 说明](games/tata/README.md)。
 
 **推荐桌面入口：双击 `Start-GUI.cmd`。** 中文界面支持主线挑战和双人合作（34关直接在主线里选择），自动发现在线设备，提供四位置阵容编辑、配置方案自动缓存、启动/停止和日志。详见 [GUI 使用说明](docs/GUI.md)。
 
@@ -39,6 +42,7 @@ py -3 -m venv .venv
 ```text
 src/autogame/platforms/   平台协议与 MuMu 截图、触摸、窗口接口
 games/bilibili_hero_merge/  识别、策略、状态机、模板及测试
+games/tata/              Tata 游戏入口；fishing/ 为钓鱼子功能
 config/                  配置示例；local.json 不入库
 scripts/                 Windows 启动器
 docs/                    工作总结、架构、运行手册和历史文档
