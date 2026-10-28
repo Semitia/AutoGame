@@ -4,7 +4,7 @@ from pathlib import Path
 import runpy
 import sys
 
-FEATURES = {'fishing': Path(__file__).resolve().parent / 'fishing'}
+FEATURES = {name: Path(__file__).resolve().parent / name for name in ('fishing', 'mainline')}
 
 
 def main():
@@ -17,7 +17,7 @@ def main():
     panel = bool(options and options[0] == '--panel')
     if panel:
         options = options[1:]
-    entry = FEATURES[args.feature] / ('panel.py' if panel else 'desktop.py')
+    entry = FEATURES[args.feature] / ('panel.py' if panel or args.feature == 'mainline' else 'desktop.py')
     sys.path.insert(0, str(entry.parent))
     sys.argv = [str(entry), *options]
     runpy.run_path(str(entry), run_name='__main__')
