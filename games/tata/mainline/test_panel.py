@@ -4,7 +4,7 @@ import tkinter as tk
 import unittest
 from pathlib import Path
 
-from model import Catalog, DATA, DATASET, load_roster
+from model import Catalog, DATA, DATASET, RUNTIME, load_roster
 from panel import MainlinePanel
 from test_live_roster import capture
 
@@ -26,6 +26,26 @@ class PanelIntegrationTests(unittest.TestCase):
                 before=path.read_bytes();bad=capture();bad['pets'][0]['tid']=999999
                 with self.assertRaises(ValueError):app.apply_live_capture(bad)
                 self.assertEqual(path.read_bytes(),before)
+            finally:root.destroy()
+
+    @unittest.skipUnless((RUNTIME/'search-11-26.json').exists(),'Local experimental simulation required')
+    def test_simulated_plan_enemy_elements_and_replay(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            root=tk.Tk();root.withdraw()
+            try:
+                app=MainlinePanel(root,Catalog(),Path(directory)/'roster.json')
+                app.apply_live_capture(json.loads((RUNTIME/'combat-capture.json').read_text(encoding='utf-8')))
+                app.load_simulation(RUNTIME/'search-11-26.json')
+                self.assertEqual(len(app.placements),15)
+                self.assertEqual(app.stage_data['stage']['ID'],826)
+                self.assertEqual(len(app.board.enemy_regions),15)
+                app.toggle_replay();self.assertIsNotNone(app.replay_frame)
+                self.assertEqual(app.replay_index,1)
+                app.replay_playing=False
+                app.choose_candidate(1)
+                if app.placements!={(p['x'],p['y']):p['unit_id'] for p in app.current_report['placements']}:
+                    with self.assertRaises(ValueError):app.toggle_replay()
             finally:root.destroy()
 
     def test_edit_save_restart_and_plan(self):

@@ -134,7 +134,7 @@ def find_pet_models(data):
 
 PET_FIELDS = ('tid', 'evoTID', 'starLv', 'level', 'gs', 'extraAmount', 'isGet',
               'isShinyUnlocked', 'showShiny', 'showEvoTID', 'styleID', 'accessoryID',
-              'backgroundID', 'showAuroraID')
+              'backgroundID', 'showAuroraID', 'progress', 'isHotSpringOwner')
 FEED_FIELDS = ('petTid', 'feedLevel', 'feedGrowth', 'feedCount', 'shinyFoodCnt')
 
 
@@ -159,6 +159,14 @@ def extract_model(heap, ref):
         if feed.get('petTid') != tid:
             raise LiveReadError('角色喂养数据归属校验失败')
         row['feed'] = {k: feed[k] for k in FEED_FIELDS if k in feed}
+        for field,allowed in [('badgeProps',{'element','atkPct','defPct','hpPct'})]:
+            if isinstance(pet.get(field),TableRef):
+                entries=heap.table(pet[field])
+                if len(entries)>20:raise LiveReadError('角色加成表长度异常')
+                row[field]=[{k:v for k,v in heap.table(item).items() if k in allowed}
+                            for _,item in sorted(entries.items())]
+        if isinstance(pet.get('hotSpringAttrIDs'),TableRef):
+            row['hotSpringAttrIDs']=[v for _,v in sorted(heap.table(pet['hotSpringAttrIDs']).items())]
         result['pets'].append(row)
     if not result['pets']:
         raise LiveReadError('未读到已拥有角色，原角色池已保留')

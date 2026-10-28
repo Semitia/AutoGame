@@ -1,6 +1,6 @@
 # 主线数据与离线运行研究
 
-当前已有本地 Tkinter 工作台与启发式布阵基线；同时具备 APK 拆包、全量解码、配置 JSON 导出与关卡关联工具。`probe_headless.py` 可在无 Unity 环境中调用原始战斗字节码的部分方法。完整战斗、胜负校准和基于模拟的 policy 尚未完成。
+当前已有 Tkinter 工作台、已登录角色池只读同步、原始 Lua 战斗引擎的实验性本地运行，以及按模拟结果搜索阵容/站位的工具。11-26 已搜索出本地模拟通过候选，尚待用户实战校准。原生寻路与宿主接口适配仍有未验证差异，不保证实战通关。
 
 ## 可视化工作台
 
@@ -55,6 +55,33 @@ python games/tata/mainline/verify_rules.py --source runtime/tata/research/decode
 
 ```powershell
 python games/tata/mainline/live_roster.py
+```
+
+## 实验性战斗模拟、搜索与回放
+
+地图布阵页新增“模拟当前布阵”“搜索阵容与站位”“打开模拟方案”“播放 / 暂停回放”。先重新同步角色池，以读取准确的等级进度、徽章加成和喂养状态；手动编辑后若与观测不同，暂停模拟并要求重同步。搜索预算默认 120 次，成功后自动显示方案；中间最优方案写入 .progress.json，错误不覆盖地图。更换角色池/关卡期间得到的旧结果只保存，不自动应用。
+
+模拟执行解码后的原始 BattleEngine、单位、AI、技能、弹道、Buff、出怪、胜负检查和随机数，而非把稀有度偏好分冒充胜率。headless.lua 提供类/表扩展/配置加载及图形事件宿主桥接；配置、PetData、PetAttribs 与战斗方法来自原始字节码。native BattleAStar/Data 接口目前由占格表和原包保留的 Lua A* 版本桥接，**路径平局选择与原生版本尚未校准**。场地初始 NPC/技能通过原 ClientBattleBuilder 生成；额外战斗专用温泉/场地技能尚未同步，报告明确保留限制。
+
+本机观测的 68 只塔塔，用原始 PetAttribs 重算 gs，68/68 与游戏读数完全相等。当前游戏内存中 Battle_826 的全部 44 个出怪事件也与本地配置逐字段相等。这些校验不能替代实战时序/胜负校准。
+
+搜索 v1：以旧启发式、实测战力排序和不同站位为起点，在有界候选池中执行换宠物、交换格子、移动空格的局部搜索；每个候选都用同一个原始随机种子模拟比较，最终三个候选再用 701/2029/8191 三个独立种子复核。失败局按击杀率优先、伤害和时长次之；通过局优先。这是预算内候选搜索，不是全局最优证明。
+
+11-26 本次结果：180 个候选，从旧方案击杀 26/50 提升到 50/50；搜索种子 123456 及三个复核种子都模拟通过（94 秒）。本机结果 runtime/tata/mainline/search-11-26.json 带初始布阵、帧轨迹、各候选结果及观测指纹；formation-11-26.png 是交给用户试打的带头像、元素、星级的布阵图。**实战验证仍待用户反馈。**
+
+```powershell
+python games/tata/mainline/live_roster.py --out runtime/tata/mainline/combat-capture.json
+python games/tata/mainline/combat.py --capture runtime/tata/mainline/combat-capture.json --stage 11-26
+python games/tata/mainline/search_policy.py --capture runtime/tata/mainline/combat-capture.json --stage 11-26 --budget 180 --out runtime/tata/mainline/search-11-26.json
+python run.py tata mainline --stage 11-26 --simulation runtime/tata/mainline/search-11-26.json
+```
+
+敌人预览改为分列圆头像，右上叠原元素图标；悬停显示元素与克制关系。地图改为裁剪视口，取消默认铺满格子线，拖入时或勾选“显示布阵格”才显示全部真实部署格。回放画出原始逻辑得到的位置与血条，尚未实现 Spine 动画和所有粒子效果。
+
+render_unit_art.py 只读取对应游戏缓存，按原始网格/UV、Idle 动画元数据、RGB24 顶点索引贴图、RGBAHalf 位置与 R8 双组 alpha 贴图，还原静态待机帧。已补充 48 个形态的本机预览；资源缺失/格式不支持时仍用原头像。资源留本机，不随仓库分发。它不是完整原客户端或动画播放器。提取依赖 UnityPy、numpy、opencv-python；面板加载已有 PNG 不依赖这些包。
+
+```powershell
+python games/tata/mainline/render_unit_art.py --capture runtime/tata/mainline/combat-capture.json
 ```
 
 ## 交互原则与客户端内嵌

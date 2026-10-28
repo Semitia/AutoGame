@@ -3,6 +3,7 @@ import argparse
 from pathlib import Path
 import tkinter as tk
 import subprocess,sys,json
+import uuid
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from model import (Catalog, DATA, DATASET, RUNTIME, load_roster, snapshot, write_json,
                    validate_pet, filtered_pets, shared_level_value, SharedLevelConflict)
@@ -13,11 +14,13 @@ from widgets import Art, Gallery, BattleBoard, ScrollArea, StarPicker, draw_star
 
 
 class MainlinePanel:
-    def __init__(self, root, catalog, state=RUNTIME/'roster.json'):
+    def __init__(self, root, catalog, state=RUNTIME/'roster.json', initial_stage='1-1'):
         self.root, self.catalog, self.state = root, catalog, Path(state)
         self.pets, self.placements, self.candidates = [], {}, []
         self.selected_id, self.stage_data, self.ghost, self.drag_id = None, None, None, None
         self.plan_mode, self.notes, self.read_error = 'manual', '', False
+        self.initial_stage=initial_stage;self.replay_frame=None;self.replay_index=0;self.replay_playing=False
+        self.current_report=None;self.show_grid=tk.BooleanVar(value=False);self.search_budget=tk.StringVar(value='120')
         root.title('Tata · 图鉴与地图布阵'); root.configure(bg=BG)
         width, height = min(1280,root.winfo_screenwidth()-70), min(820,root.winfo_screenheight()-100)
         root.geometry(f'{width}x{height}'); root.minsize(min(1050,width),min(660,height))
@@ -252,7 +255,7 @@ class MainlinePanel:
         if path: write_json(path,snapshot(self.pets,self.catalog,self.notes,shared_level=self.level.get())); self.status.set('已导出：'+path)
 
     def build_battle(self,parent):
-        toolbar=ttk.Frame(parent); toolbar.pack(fill='x',pady=(0,8)); self.stage_query=tk.StringVar(value='1-1')
+        toolbar=ttk.Frame(parent); toolbar.pack(fill='x',pady=(0,8)); self.stage_query=tk.StringVar(value=self.initial_stage)
         ttk.Label(toolbar,text='关卡').pack(side='left')
         entry=ttk.Entry(toolbar,textvariable=self.stage_query,width=12); entry.pack(side='left',padx=6)
         entry.bind('<Return>',lambda _:self.guard(self.load_stage))
@@ -262,6 +265,15 @@ class MainlinePanel:
         self.candidate_box.bind('<<ComboboxSelected>>',lambda _:self.choose_candidate(self.candidate_box.current()))
         ttk.Button(toolbar,text='保存布阵',command=lambda:self.guard(self.save_plan)).pack(side='right')
         ttk.Button(toolbar,text='清空',command=self.clear_board).pack(side='right',padx=6)
+        actions=ttk.Frame(parent);actions.pack(fill='x',pady=(0,8))
+        self.sim_button=ttk.Button(actions,text='模拟当前布阵',command=lambda:self.guard(lambda:self.run_local(False)))
+        self.sim_button.pack(side='left',padx=(0,6))
+        self.search_button=ttk.Button(actions,text='搜索阵容与站位',command=lambda:self.guard(lambda:self.run_local(True)))
+        self.search_button.pack(side='left',padx=(0,6))
+        ttk.Label(actions,text='预算').pack(side='left');ttk.Entry(actions,textvariable=self.search_budget,width=5).pack(side='left',padx=(4,10))
+        ttk.Button(actions,text='打开模拟方案',command=lambda:self.guard(self.open_simulation)).pack(side='left',padx=5)
+        ttk.Button(actions,text='播放 / 暂停回放',command=lambda:self.guard(self.toggle_replay)).pack(side='left',padx=5)
+        ttk.Checkbutton(actions,text='显示布阵格',variable=self.show_grid,command=lambda:self.board.draw()).pack(side='left',padx=8)
         content=ttk.Frame(parent); content.pack(fill='both',expand=True)
         left=ttk.Frame(content); left.pack(side='left',fill='both',expand=True,padx=(0,10)); self.filters(left)
         ttk.Label(left,text='拖卡片上阵 · 地图内拖动交换位置 · 拖回卡片区下阵',foreground=ACCENT).pack(anchor='w',pady=8)
@@ -277,13 +289,16 @@ class MainlinePanel:
         if not self.read_error:
             self.status.set('已载入原地图与关卡约束' if self.art.path(reference) else '关卡数据已载入；此章贴图未包含在本地资源中')
     def clear_board(self):
+        self.replay_playing=False;self.replay_frame=None;self.current_report=None
         self.placements={}; self.candidates=[]; self.plan_mode='manual'
         self.candidate_box['values']=[]; self.candidate_box.set(''); self.refresh()
     def place(self,uid,target):
+        self.replay_playing=False;self.replay_frame=None;self.current_report=None
         self.placements=move_unit(self.stage_data,self.pets,self.placements,uid,target)
         self.plan_mode='manual'; self.refresh(); self.status.set('已调整布阵 · 未模拟战斗；可保存本地方案')
     def begin_drag(self,uid):
         self.drag_id=uid; self.select_pet(uid)
+        self.board.draw()
         self.ghost=tk.Toplevel(self.root); self.ghost.overrideredirect(True); self.ghost.attributes('-topmost',True)
         pet=next(p for p in self.pets if p['unit_id']==uid)
         image=self.art.image(self.catalog.resource(uid,pet['evolution']).get('IconName',''),72,72)
@@ -306,16 +321,107 @@ class MainlinePanel:
     def choose_candidate(self,index):
         if not 0<=index<len(self.candidates): return
         candidate=self.candidates[index]; self.placements={(p['x'],p['y']):p['unit_id'] for p in candidate['placements']}
-        self.plan_mode=candidate['mode']
-        self.reason.set('候选偏好分不是胜率；位置尚未优化，可拖动调整。星级、属性评级与技能暂未参与评分。')
+        self.plan_mode=candidate['mode'];self.replay_frame=None;self.replay_playing=False
+        if candidate.get('simulated'):
+            v=candidate['evaluation'];validation=candidate.get('validation',[])
+            text=f'原始 Lua 模拟：{"通过" if v["won"] else "未通过"}，击杀 {v["kills"]}/{v["total_enemies"]}，{v["battle_secs"]:.1f}s。'
+            if validation:text+=f'独立种子通过 {sum(x["won"] for x in validation)}/{len(validation)}。'
+            self.reason.set(text+'待实战校准；不是通关保证。')
+        else:self.reason.set('候选偏好分不是胜率；位置尚未优化，可拖动调整。星级、属性评级与技能暂未参与评分。')
         self.refresh()
     def save_plan(self):
         if not self.placements: raise ValueError('请先拖入塔塔或生成候选')
         path=filedialog.asksaveasfilename(title='保存布阵',defaultextension='.json',initialfile=f'plan-{self.stage_data["stage"]["ID"]}.json')
         if path:
-            write_json(path,dict(schema_version=3,simulated=False,stage_id=self.stage_data['stage']['ID'],data_version='apk-0.50.1',policy=self.plan_mode,
+            write_json(path,dict(schema_version=3,simulated=bool(self.current_report),calibrated=False,simulation=self.current_report,
+                stage_id=self.stage_data['stage']['ID'],data_version='apk-0.50.1',policy=self.plan_mode,
                 roster=snapshot(self.pets,self.catalog,self.notes,shared_level=self.level.get()),placements=[dict(unit_id=v,x=k[0],y=k[1]) for k,v in self.placements.items()]))
             self.status.set('已保存布阵：'+path)
+
+    def run_local(self,search):
+        if getattr(self,'combat_process',None) is not None and self.combat_process.poll() is None:return
+        if not search and not self.placements:raise ValueError('请先摆放阵容')
+        budget=int(self.search_budget.get())
+        if not 4<=budget<=10000:raise ValueError('搜索预算应为 4–10000 个候选')
+        rows=[];stamps=set()
+        for pet in self.pets:
+            observed=pet.get('game_observed',{})
+            if any(observed.get(k)!=v for k,v in [('tid',pet['unit_id']),('evoTID',pet['evolution']),('starLv',pet['stars']),('level',int(self.level.get()))]):
+                raise ValueError('角色池已被手动修改或缺少游戏观测，请先从已登录游戏同步')
+            stamps.add(observed['captured_at']);rows.append({k:v for k,v in observed.items() if k!='captured_at'})
+        if len(stamps)!=1:raise ValueError('角色池观测时间不一致，请重新同步')
+        capture=dict(schema_version=1,source='wechat-webgl-memory',captured_at=next(iter(stamps)),shared_level=int(self.level.get()),pets=rows)
+        from combat import pet_proto
+        for row in rows:pet_proto(row)
+        self.replay_playing=False;self.replay_frame=None
+        job=RUNTIME/'simulations'/uuid.uuid4().hex;job.mkdir(parents=True,exist_ok=True)
+        write_json(job/'capture.json',capture)
+        self.combat_output=job/'result.json';self.combat_log=(job/'run.log').open('w',encoding='utf-8')
+        script='search_policy.py' if search else 'combat.py'
+        args=[sys.executable,'-X','utf8',str(Path(__file__).with_name(script)),
+              '--capture',str(job/'capture.json'),'--stage',str(self.stage_data['stage']['ID']),'--out',str(self.combat_output)]
+        if search:args+=['--budget',str(budget)]
+        else:
+            write_json(job/'plan.json',dict(placements=[dict(unit_id=uid,x=x,y=y) for (x,y),uid in self.placements.items()]))
+            args+=['--plan',str(job/'plan.json')]
+        self.combat_input=(self.stage_data['stage']['ID'],self.level.get(),json.dumps(self.pets,sort_keys=True))
+        try:self.combat_process=subprocess.Popen(args,stdout=self.combat_log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        except Exception:self.combat_log.close();raise
+        self.sim_button.configure(state='disabled');self.search_button.configure(state='disabled')
+        self.status.set('正在本地执行原始战斗逻辑…');self.root.after(500,self.poll_combat)
+
+    def poll_combat(self):
+        progress=self.combat_output.with_suffix('.progress.json')
+        if self.combat_process.poll() is None:
+            if progress.is_file():
+                try:
+                    p=json.loads(progress.read_text(encoding='utf-8'));v=p['evaluation']
+                    self.status.set(f'本地搜索 {p["evaluated"]}/{p["budget"]} · 最佳击杀 {v["kills"]}/{v["total_enemies"]}'+(' · 模拟通过' if v['won'] else ''))
+                except (ValueError,OSError,KeyError):pass
+            self.root.after(500,self.poll_combat);return
+        self.combat_log.close();self.sim_button.configure(state='normal');self.search_button.configure(state='normal')
+        if self.combat_process.returncode:
+            detail=(self.combat_output.parent/'run.log').read_text(encoding='utf-8')
+            self.status.set('模拟未完成，布阵未改动；日志：'+str(self.combat_output.parent/'run.log'))
+            messagebox.showerror('模拟未完成',detail[-1800:],parent=self.root);return
+        current=(self.stage_data['stage']['ID'],self.level.get(),json.dumps(self.pets,sort_keys=True))
+        if current!=self.combat_input:
+            self.status.set('模拟已保存，期间关卡或角色池发生变化；请用“打开模拟方案”查看。');return
+        self.guard(lambda:self.load_simulation(self.combat_output))
+
+    def open_simulation(self):
+        path=filedialog.askopenfilename(title='打开模拟结果',initialdir=RUNTIME,filetypes=[('模拟结果 JSON','*.json')])
+        if path:self.load_simulation(path)
+
+    def load_simulation(self,path):
+        from model import read_json
+        report=read_json(path)
+        if report.get('simulated') is not True or not isinstance(report.get('evaluation'),dict):raise ValueError('不是模拟结果文件')
+        stage=self.catalog.stage(report['stage_id']);board={}
+        for p in report['placements']:board=move_unit(stage,self.pets,board,p['unit_id'],(p['x'],p['y']))
+        self.stage_query.set(str(report['stage_id']));self.load_stage()
+        mode=report.get('mode','original-lua-simulation')
+        candidates=report.get('finalists') or [dict(placements=report['placements'],evaluation=report['evaluation'],score=report['evaluation']['score'])]
+        self.candidates=[dict(c,mode=mode,simulated=True) for c in candidates]
+        self.candidate_box['values']=[f'模拟候选 {i+1}' for i in range(len(candidates))]
+        self.candidate_box.current(0);self.choose_candidate(0)
+        self.current_report=report;self.replay_index=0
+        self.status.set('已载入模拟方案与回放。待实战核对，尚未保证通关。')
+
+    def toggle_replay(self):
+        if not self.current_report or not self.current_report['evaluation'].get('frames'):raise ValueError('请先模拟或打开带回放的方案')
+        plan={(p['x'],p['y']):p['unit_id'] for p in self.current_report['placements']}
+        if plan!=self.placements:raise ValueError('此候选尚无回放，请先点“模拟当前布阵”')
+        self.replay_playing=not self.replay_playing
+        if self.replay_playing:self.replay_tick()
+
+    def replay_tick(self):
+        if not self.replay_playing or not self.current_report:return
+        frames=self.current_report['evaluation']['frames']
+        if self.replay_index>=len(frames):self.replay_index=0
+        self.replay_frame=frames[self.replay_index];self.replay_index+=1;self.board.draw()
+        if self.replay_index>=len(frames):self.replay_playing=False;return
+        self.root.after(250,self.replay_tick)
 
     def sync_live(self):
         if getattr(self,'live_process',None) is not None and self.live_process.poll() is None:return
@@ -380,8 +486,11 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data',type=Path,default=DATA); parser.add_argument('--dataset',type=Path,default=DATASET)
     parser.add_argument('--state',type=Path,default=RUNTIME/'roster.json')
+    parser.add_argument('--stage',default='1-1');parser.add_argument('--simulation',type=Path)
     args=parser.parse_args(); root=tk.Tk()
-    try: MainlinePanel(root,Catalog(args.data,args.dataset),args.state)
+    try:
+        app=MainlinePanel(root,Catalog(args.data,args.dataset),args.state,args.stage)
+        if args.simulation:app.load_simulation(args.simulation)
     except Exception as exc:
         root.withdraw(); messagebox.showerror('主线工作台未能启动',str(exc),parent=root); root.destroy(); return
     root.mainloop()

@@ -2,7 +2,7 @@
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
-from PIL import Image, ImageTk, ImageOps
+from PIL import Image, ImageTk, ImageOps, ImageDraw, ImageChops
 
 from model import RUNTIME, ELEMENTS
 from policy import slots_for
@@ -40,16 +40,21 @@ class Art:
                 return p
         return None
 
-    def image(self, reference, width, height, stretch=False):
+    def image(self, reference, width, height, stretch=False, crop=None, circle=False):
         path = self.path(reference)
         if path is None:
             return None
-        key = (str(path), max(1, int(width)), max(1, int(height)), stretch)
+        key = (str(path), max(1, int(width)), max(1, int(height)), stretch,crop,circle)
         if key not in self.cache:
             with Image.open(path) as raw:
                 image = raw.convert('RGBA')
+                if crop:image=image.crop(tuple(round(v*(image.width if i%2==0 else image.height)) for i,v in enumerate(crop)))
                 size = key[1:3]
                 image = image.resize(size, Image.Resampling.LANCZOS) if stretch else ImageOps.contain(image, size, Image.Resampling.LANCZOS)
+                if circle:
+                    image=ImageOps.fit(image,size,Image.Resampling.LANCZOS)
+                    mask=Image.new('L',size);ImageDraw.Draw(mask).ellipse((0,0,size[0]-1,size[1]-1),fill=255)
+                    image.putalpha(ImageChops.multiply(image.getchannel('A'),mask))
                 self.cache[key] = ImageTk.PhotoImage(image, master=self.root)
         return self.cache[key]
 
@@ -214,87 +219,108 @@ class BattleBoard(tk.Canvas):
         self.bind('<B1-Motion>', self.motion)
         self.bind('<ButtonRelease-1>', self.release)
         self.bind('<Button-3>', self.remove)
+        self.bind('<Motion>',self.hover)
+
+    def rounded(self,box,radius=10,**options):
+        x1,y1,x2,y2=box;r=min(radius,(x2-x1)/2,(y2-y1)/2)
+        return self.create_polygon(x1+r,y1,x2-r,y1,x2,y1,x2,y1+r,x2,y2-r,x2,y2,
+            x2-r,y2,x1+r,y2,x1,y2,x1,y2-r,x1,y1+r,x1,y1,smooth=True,**options)
+
+    def element(self,unit,x,y,size):
+        element=unit.get('UnitElement',1);info=self.app.catalog.elements.get(str(element),{})
+        icon=self.app.art.image(info.get('IconName',''),size,size)
+        if icon:self.create_image(x,y,image=icon)
+        else:
+            self.create_oval(x-size/2,y-size/2,x+size/2,y+size/2,fill='#7c7686',outline='#201e2d',width=2)
+            self.create_text(x,y,text=ELEMENTS.get(element,'?'),fill='white',font=('Microsoft YaHei UI',max(6,int(size*.35))))
+
+    def hover(self,event):
+        enemy=next((uid for box,uid in getattr(self,'enemy_regions',[]) if box[0]<=event.x<=box[2] and box[1]<=event.y<=box[3]),None)
+        if enemy is None:return
+        unit=self.app.stage_data['enemy_units'][str(enemy)];element=unit.get('UnitElement',1)
+        info=self.app.catalog.elements.get(str(element),{})
+        self.app.status.set(f'{self.app.catalog.name(enemy)} · {ELEMENTS.get(element,"无")}元素 · '
+            f'克制{ELEMENTS.get(info.get("CounterElement"),"无")}，被{ELEMENTS.get(info.get("WeakElement"),"无")}克制')
 
     def hit(self, root_x, root_y):
         x, y = root_x-self.winfo_rootx(), root_y-self.winfo_rooty()
         return next((slot for slot, r in self.regions.items() if r[0] <= x < r[2] and r[1] <= y < r[3]), None)
 
     def draw(self):
-        app = self.app; self.delete('all'); self.regions = {}
-        if app.stage_data is None:
-            return
-        width, height = max(self.winfo_width(), 200), max(self.winfo_height(), 300)
-        resource = app.catalog.battle_resources.get(str(app.stage_data['battle'].get('ResID')), {})
-        reference = resource.get('BackgroundRes', '')
-        rw,rh=app.art.dimensions(reference)
-        map_width = min(width, height*rw/rh)
-        left = (width-map_width)/2
-        height = map_width*rh/rw
-        background = app.art.image(reference, map_width, height, stretch=True)
-        if background:
-            self.create_image(width/2, height/2, image=background)
+        app=self.app;self.delete('all');self.regions={};self.enemy_regions=[]
+        if app.stage_data is None:return
+        width,height=max(self.winfo_width(),200),max(self.winfo_height(),300)
+        resource=app.catalog.battle_resources.get(str(app.stage_data['battle'].get('ResID')),{})
+        reference=resource.get('BackgroundRes','')
+        # The game shows a cropped camera viewport rather than the whole tall map.
+        crop=(0,.18,1,.94);rw,rh=app.art.dimensions(reference);ratio=rw/(rh*(crop[3]-crop[1]))
+        mw=min(width,(height-32)*ratio);mh=mw/ratio;left=(width-mw)/2
+        background=app.art.image(reference,mw,mh,stretch=True,crop=crop)
+        if background:self.create_image(width/2,mh/2,image=background)
+        else:self.create_rectangle(left,0,left+mw,mh,fill='#645143',outline='')
+        title_w=mw*.29;title_y=mh*.037
+        self.rounded((width/2-title_w/2,title_y-12,width/2+title_w/2,title_y+12),8,fill='#242335',outline='black',width=2)
+        self.create_text(width/2,title_y,text=app.stage_data['stage']['DisplayName'],fill='white',font=('Microsoft YaHei UI',11,'bold'))
+        areas=grid_areas(app.stage_data);field,deploy=areas['field'],areas['deploy']
+        groups={x:[] for x in range(field['x'],field['x']+field['width'])}
+        for _,event in sorted(app.stage_data['waves'].get('Frame',{}).items(),key=lambda kv:int(kv[0])):
+            for wave in event.get('Waves',{}).values():
+                for col in wave.get('Cols',{}).values():
+                    enemy=wave['EnemyID']
+                    if col in groups and enemy not in groups[col]:groups[col].append(enemy)
+        pw=mw*.64;pl=width/2-pw/2;pt=mh*.085;thumb=min(mw*.067,pw/max(5,field['width'])-.5)
+        rows=max(3,max(map(len,groups.values()),default=0));ph=25+rows*(thumb+3)
+        self.rounded((pl,pt,pl+pw,pt+ph),10,fill='#fffef8',outline='#191828',width=2)
+        level=app.stage_data['battle']['MonsterLevel'].get('1','?')
+        self.create_text(width/2,pt+11,text=f'敌人等级：{level}',fill='#171523',font=('Microsoft YaHei UI',9,'bold'))
+        for col,enemies in groups.items():
+            cx=pl+(col-field['x']+.5)*pw/field['width'];lane_w=pw/field['width']*.88
+            self.rounded((cx-lane_w/2,pt+22,cx+lane_w/2,pt+ph-5),8,fill='#e5e0f2',outline='')
+            for i,enemy in enumerate(enemies):
+                cy=pt+24+thumb/2+i*(thumb+3)
+                self.create_oval(cx-thumb/2-1,cy-thumb/2-1,cx+thumb/2+1,cy+thumb/2+1,fill='white',outline='#201f2e',width=1)
+                icon=app.art.image(app.catalog.resource(enemy).get('IconName',''),thumb,thumb,circle=True)
+                if icon:self.create_image(cx,cy,image=icon)
+                else:self.create_text(cx,cy,text=str(enemy),font=('Arial',6))
+                unit=app.stage_data['enemy_units'][str(enemy)]
+                self.element(unit,cx+thumb*.36,cy-thumb*.37,thumb*.46)
+                self.enemy_regions.append(((cx-thumb/2,cy-thumb/2,cx+thumb/2,cy+thumb/2),enemy))
+        cell=mw*.114;baseline=mh*.80;center=width/2
+        show_grid=getattr(app,'show_grid',None)
+        show_grid=(show_grid.get() if show_grid is not None else False) or app.drag_id is not None
+        for x,y in slots_for(app.stage_data):
+            cx=center+(x-3)*cell;cy=baseline-(y-1)*cell
+            box=(cx-cell*.48,cy-cell*.48,cx+cell*.48,cy+cell*.48)
+            self.regions[(x,y)]=box
+            if show_grid:
+                self.rounded(box,5,fill='',outline='#f8eac0',width=1,dash=(3,3))
+                if (x,y) not in app.placements:self.create_text(cx,cy,text='+',fill='#f4ebca')
+        frame=getattr(app,'replay_frame',None)
+        if frame:
+            actors=frame['units']
         else:
-            self.create_rectangle(left, 0, left+map_width, height, fill='#393250', outline='')
-            self.create_text(width/2, height*.35, text='本章地图贴图尚未下载\n保留实际格子与布阵约束', fill=MUTED, justify='center')
-        self.create_rectangle(left+10, 8, left+map_width-10, 43, fill='#211e39', outline='#7a6a9b', width=2)
-        self.create_text(width/2, 26, text=f'{app.stage_data["stage"]["DisplayName"]}   敌人等级 {app.stage_data["battle"]["MonsterLevel"].get("1", "?")}', fill=TEXT, font=('Microsoft YaHei UI', 11, 'bold'))
-        areas=grid_areas(app.stage_data)
-        field,deploy=areas['field'],areas['deploy']
-        columns = field['width']
-        groups = {x: [] for x in range(field['x'],field['x']+columns)}
-        for event in app.stage_data['waves'].get('Frame', {}).values():
-            for wave in event.get('Waves', {}).values():
-                enemy = str(wave['EnemyID'])
-                for column in wave.get('Cols', {}).values():
-                    if column in groups and enemy not in groups[column]:
-                        groups[column].append(enemy)
-        panel_left, panel_width = left+map_width*.16, map_width*.68
-        self.create_rectangle(panel_left, 49, panel_left+panel_width, 165, fill='#f0edf8', outline='#332c4d', width=2)
-        self.create_text(width/2, 60, text='各列可能出现的敌人', fill='#332c4d', font=('Microsoft YaHei UI', 8))
-        thumb = min(28, panel_width/columns-6)
-        for column, enemies in groups.items():
-            for i, enemy in enumerate(enemies[:3]):
-                x = panel_left+(column-field['x']+.5)*panel_width/columns
-                y = 82+i*29
-                icon = app.art.image(app.catalog.resource(enemy).get('IconName', ''), thumb, thumb)
-                if icon:
-                    self.create_image(x, y, image=icon)
-                else:
-                    self.create_text(x, y, text=enemy, fill='#332c4d', font=('Microsoft YaHei UI', 7))
-            if len(enemies) > 3:
-                self.create_text(panel_left+(column-field['x']+.5)*panel_width/columns, 154,
-                                 text=f'+{len(enemies)-3}', fill='#332c4d', font=('Microsoft YaHei UI', 7))
-        try:
-            slots = slots_for(app.stage_data)
-        except ValueError as exc:
-            self.create_text(width/2, height*.6, text=str(exc), fill=TEXT, width=map_width-30); return
-        cell = map_width*.43/5
-        center_x = width/2
-        baseline = height*.78
-        # Presentation coordinates on the original texture; logical x/y remain unchanged.
-        for x,y in rectangle_slots(field):
-            cx=center_x+(x-3)*cell
-            cy=baseline-(y-1)*cell
-            if cy<175: continue  # enemy preview overlays the far end of the battlefield
-            self.create_rectangle(cx-cell*.48,cy-cell*.48,cx+cell*.48,cy+cell*.48,outline='#658054',dash=(2,5))
-        for x, y in slots:
-            cx = center_x+(x-3)*cell
-            cy = baseline-(y-1)*cell
-            r = (cx-cell*.48, cy-cell*.48, cx+cell*.48, cy+cell*.48)
-            self.regions[(x, y)] = r
-            self.create_rectangle(*r, outline='#d6ebad', width=1, dash=(3, 3), fill='', tags='slot')
-            uid = app.placements.get((x, y))
-            if uid:
-                pet = next(p for p in app.pets if p['unit_id'] == uid)
-                image = app.art.image(app.catalog.resource(uid, pet['evolution']).get('IconName', ''), cell*1.05, cell*1.05)
-                if image:
-                    self.create_image(cx, cy-3, image=image)
-                else:
-                    self.create_text(cx, cy, text=app.catalog.name(uid), fill='white', width=cell)
-            else:
-                self.create_text(cx, cy, text='+', fill='#e6f5c8', font=('Microsoft YaHei UI', 15))
-        self.create_rectangle(left+8, height-44, left+map_width-8, height-8, fill='#211e39', outline='#6a6086')
-        self.create_text(width/2, height-26, text=f'{deploy["width"]}列 × {deploy["height"]}行 · 上阵 {len(app.placements)}/{app.stage_data["waves"]["CanDeployNum"]} · 右键下阵', fill=TEXT)
+            actors=[dict(tid=uid,x=x,y=y,camp=1,evolution=next(p['evolution'] for p in app.pets if p['unit_id']==uid))
+                    for (x,y),uid in app.placements.items()]
+        for actor in sorted(actors,key=lambda a:-a['y']):
+            uid,evo=actor['tid'],actor['evolution'];cx=center+(actor['x']-3)*cell;cy=baseline-(actor['y']-1)*cell
+            if cy<pt+ph+cell*.2 or cy>mh:continue
+            unit=app.catalog.units.get(str(uid),{})
+            body=f'battle_idle_{uid}_{evo}.png'
+            image=app.art.image(body,cell*1.12,cell*1.22)
+            if image is None:image=app.art.image(app.catalog.resource(uid,evo).get('IconName',''),cell*.98,cell*.98)
+            self.create_oval(cx-cell*.32,cy+cell*.24,cx+cell*.32,cy+cell*.4,fill='#665536',outline='',stipple='gray50')
+            if image:self.create_image(cx,cy,image=image)
+            else:self.create_text(cx,cy,text=str(uid),fill='white')
+            self.element(unit,cx-cell*.36,cy-cell*.39,max(9,cell*.28))
+            if 'hp' in actor:
+                hp=max(0,min(1,actor['hp']/max(1,actor['max_hp'])))
+                self.create_rectangle(cx-cell*.4,cy+cell*.42,cx+cell*.4,cy+cell*.49,fill='#271f37',outline='')
+                self.create_rectangle(cx-cell*.4,cy+cell*.42,cx-cell*.4+cell*.8*hp,cy+cell*.49,
+                    fill='#76db5e' if actor['camp']==1 else '#ec625e',outline='')
+        self.rounded((left+4,mh-20,left+mw-4,mh+12),6,fill='#232237',outline='')
+        text=f'上阵塔塔：{len(app.placements)}/{app.stage_data["waves"]["CanDeployNum"]}'
+        if frame:text=f'本地模拟回放  {frame["time"]:.1f}s'
+        self.create_text(left+14,mh-4,text=text,anchor='w',fill='white',font=('Microsoft YaHei UI',10,'bold'))
 
     def press(self, event):
         self.dragged = self.hit(event.x_root, event.y_root)

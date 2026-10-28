@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import math
 from rules import evolution_gate, feed_candidates
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -116,10 +117,10 @@ def validate_pet(pet, catalog):
         # A timestamped source observation, independent of subsequent manual edits.
         observed=pet['game_observed']
         integer_keys={'tid','evoTID','starLv','level','gs','extraAmount','showEvoTID',
-                      'styleID','accessoryID','backgroundID','showAuroraID'}
-        bool_keys={'isGet','isShinyUnlocked','showShiny'}
+                      'styleID','accessoryID','backgroundID','showAuroraID','progress'}
+        bool_keys={'isGet','isShinyUnlocked','showShiny','isHotSpringOwner'}
         feed_keys={'petTid','feedLevel','feedGrowth','feedCount','shinyFoodCnt'}
-        if not isinstance(observed,dict) or set(observed)-integer_keys-bool_keys-{'captured_at','feed'}:
+        if not isinstance(observed,dict) or set(observed)-integer_keys-bool_keys-{'captured_at','feed','badgeProps','hotSpringAttrIDs'}:
             raise ValueError('游戏观测字段无效')
         try:
             stamp=datetime.fromisoformat(observed['captured_at'])
@@ -136,6 +137,14 @@ def validate_pet(pet, catalog):
             raise ValueError('游戏观测数值无效')
         if any(type(v) is not bool for k,v in observed.items() if k in bool_keys):
             raise ValueError('游戏观测标记无效')
+        badges=observed.get('badgeProps',[])
+        if not isinstance(badges,list) or len(badges)>20 or any(not isinstance(b,dict) or
+                set(b)-{'element','atkPct','defPct','hpPct'} or any(type(v) not in (int,float) or
+                not math.isfinite(v) for v in b.values()) for b in badges):
+            raise ValueError('游戏观测徽章加成无效')
+        springs=observed.get('hotSpringAttrIDs',[])
+        if not isinstance(springs,list) or len(springs)>100 or any(type(v) is not int or v<0 for v in springs):
+            raise ValueError('游戏观测温泉加成无效')
         result['game_observed']={**observed,'feed':dict(feed)}
     result['notes'] = str(pet.get('notes', ''))[:4000]
     return result
