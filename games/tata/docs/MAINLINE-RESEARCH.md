@@ -104,6 +104,17 @@ java -jar .local/unluac.jar runtime/tata/research/decoded-0.50.1/Config/UnitAttr
 - 对塔塔小游戏的 Unity 资源缓存只读扫描 1,774 个 bundle，补出 41 张图，含第十一章原沙漠地图、全部 24 张星级图标、字母评级等，无解析错误；总本机 PNG 为 1,047。未读取账户存档、聊天或语音缓存。出处以 bundle 文件名和 SHA-256 记录于 `runtime/tata/mainline/art/cache-art-report.json`。
 - `inspect_catalog.py` 按恢复的 FlatBuffers 字段序解析 APK/微信资源目录，均定位到 27 个战斗背景引用及 bundle 依赖。资源目录和实际缓存覆盖范围不同，其余章节还需下载/同步；完整 CDN 资源下载路径未还原。面板已有“同步本机资源”按钮。
 
+## 已登录玩家角色池只读同步（2026-10-28）
+
+- 用户授权自动获取自己的角色池。先确认前轮 Tata 工作已提交 ac3ed19；其他游戏的未提交改动保留。
+- 仅检查 Tata appid 的本地目录：usrmmkvstorage 等存储不是可直接解析的 JSON；store 文件实际为 PNG，小游戏 miniprogramLog 未找到 PetModel 日志。未从这些文件得到玩家角色池，未去读取聊天/语音或其他小程序存档。
+- pgame.pbe 由重复的 uint32LE 长度 + FileDescriptorSet 组成，96 份描述文件恰好消费全部 444,427 字节。确认 cs_common.Dn_Pet 的 lv/pets，以及 msg.Pet 的 tid/evoTID/starLv/feed/gs、msg.PetFeed 的 feedLv/feedProgress 等协议字段。没有调用登录/GM/养成接口。
+- 当前电脑微信游戏的 WebGL 线性内存包含 Lua 5.4 wasm32 对象。按官方 lobject.h 的 TString/TValue/Node/Table 定义，与本机对象逐字段验证得到短字符串头 16、TValue 16、Node 24、Table 32 字节。通过 interned _level 键定位拥有它的表，再检查 hasInitPets、class.__cname=ed.PetModel、petCount、pets、各条 isGet 与 feedData.petTid。静态字符串命中不足以确认账号状态。
+- 实测游戏保持最小化，动态查找渲染进程与大块可读内存，约 6 秒读到共享等级 234、68 只已拥有塔塔；68 条星级/进化/精确喂养等级均通过 APK 0.50.1 配置校验。没有硬编码本次 PID、进程地址或角色数据。两次只读读取的白名单观测一致后才落盘。
+- 工具 live_roster.py 与工作台“从已登录游戏同步”已接通。使用 QUERY_INFORMATION|VM_READ，没有进程写入、注入、暂停或协议发送。整块扫描内存只在进程内临时使用，不生成内存转储；只保存角色白名单字段到 runtime，不能把账号标识、凭证或任意 Lua 表保存到角色池。
+- 本次确认了角色池同步可行；尚未同步关卡进度、装备全套依赖及账号其他模型，也未建立完整战斗模拟器。当前布局仅在本机微信运行时验证，版本变化需重新适配；不能把一次配置匹配视作全客户端版本一致。
+- 验收：28 项测试通过，覆盖合成 Lua 内存布局、失效/变化/多模型拒绝、精确观测保留和界面落盘备份；通过实际按钮将本机编辑角色池由 1 只同步为 68 只，68 条均保存读取时间，旧 1 只版本保留在 roster.previous.json。游戏全程保持最小化。
+
 ## 从真实数据到 policy 的验收路径
 
 1. **数据层**：提取关卡地图、波次/出怪时间/路线、单位属性成长、技能参数、元素关系和布阵限制。每项保留版本、源路径与字段来源，未知字段报缺失而非填猜测默认值。

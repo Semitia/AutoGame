@@ -38,8 +38,12 @@ class MainlinePanel:
         entry = ttk.Entry(header,textvariable=self.level,width=7); entry.pack(side='right')
         entry.bind('<Return>',lambda _:self.guard(self.save_level))
         ttk.Label(header,text='共享等级 Lv. ').pack(side='right')
-        self.sync_button=ttk.Button(header,text='同步本机资源',command=lambda:self.guard(self.sync_art))
-        self.sync_button.pack(side='right',padx=6)
+        sync_bar=ttk.Frame(root,padding=(18,0,18,8));sync_bar.pack(fill='x')
+        self.live_button=ttk.Button(sync_bar,text='从已登录游戏同步',command=lambda:self.guard(self.sync_live))
+        self.live_button.pack(side='left',padx=(0,8))
+        self.sync_button=ttk.Button(sync_bar,text='同步本机资源',command=lambda:self.guard(self.sync_art))
+        self.sync_button.pack(side='left',padx=(0,12))
+        ttk.Label(sync_bar,text='电脑微信登录后可直接读取角色池；游戏可放后台或最小化。',foreground=MUTED).pack(side='left')
         ttk.Label(root,textvariable=self.status,style='Hint.TLabel',wraplength=1100,padding=(18,9)).pack(side='bottom',fill='x')
         self.tabs = ttk.Notebook(root); self.tabs.pack(fill='both',expand=True,padx=12)
         roster, battle = ttk.Frame(self.tabs,padding=8),ttk.Frame(self.tabs,padding=8)
@@ -312,6 +316,43 @@ class MainlinePanel:
             write_json(path,dict(schema_version=3,simulated=False,stage_id=self.stage_data['stage']['ID'],data_version='apk-0.50.1',policy=self.plan_mode,
                 roster=snapshot(self.pets,self.catalog,self.notes,shared_level=self.level.get()),placements=[dict(unit_id=v,x=k[0],y=k[1]) for k,v in self.placements.items()]))
             self.status.set('已保存布阵：'+path)
+
+    def sync_live(self):
+        if getattr(self,'live_process',None) is not None and self.live_process.poll() is None:return
+        RUNTIME.mkdir(parents=True,exist_ok=True)
+        self.live_output=RUNTIME/'live-capture.json'
+        self.live_log=(RUNTIME/'live-sync.log').open('w',encoding='utf-8')
+        args=[sys.executable,'-X','utf8',str(Path(__file__).with_name('live_roster.py')),
+              '--data',str(self.catalog.data),'--dataset',str(self.catalog.dataset),'--out',str(self.live_output)]
+        try:
+            self.live_process=subprocess.Popen(args,stdout=self.live_log,stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        except Exception:
+            self.live_log.close();raise
+        self.live_button.configure(state='disabled')
+        self.status.set('正在只读获取当前微信塔塔角色池…')
+        self.root.after(300,self.poll_live)
+
+    def apply_live_capture(self,capture):
+        from live_roster import to_roster
+        value=to_roster(capture,self.catalog)
+        old=(self.pets,self.level.get(),self.read_error)
+        notes={p['unit_id']:p.get('notes','') for p in self.pets}
+        for pet in value['pets']:pet['notes']=notes.get(pet['unit_id'],'')
+        try:
+            self.read_error=False;self.level.set(str(value['shared_level']));self.persist(value['pets'])
+        except Exception:
+            self.pets,level,self.read_error=old;self.level.set(level);self.refresh();raise
+        if self.selected_id is not None:self.select_pet(self.selected_id)
+        self.status.set(f'同步成功：共享 Lv.{value["shared_level"]}，{len(value["pets"])} 只塔塔；原角色池已备份。')
+
+    def poll_live(self):
+        if self.live_process.poll() is None:self.root.after(300,self.poll_live);return
+        self.live_log.close();self.live_button.configure(state='normal')
+        if self.live_process.returncode:
+            detail=(RUNTIME/'live-sync.log').read_text(encoding='utf-8').strip()
+            self.status.set('同步失败，原角色池未修改：'+detail[-500:]);return
+        self.guard(lambda:self.apply_live_capture(json.loads(self.live_output.read_text(encoding='utf-8'))))
 
     def sync_art(self):
         from extract_cached_art import discover_tata_caches

@@ -1,4 +1,4 @@
-"""Local catalog and versioned, manually entered player snapshots."""
+"""Local catalog and editable player snapshots with optional game observations."""
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -112,6 +112,31 @@ def validate_pet(pet, catalog):
     # Preserve legacy numeric inputs as unverified notes, never convert them to ranks.
     for legacy in ('legacy_stats','migration_notes'):
         if legacy in pet: result[legacy]=pet[legacy]
+    if 'game_observed' in pet:
+        # A timestamped source observation, independent of subsequent manual edits.
+        observed=pet['game_observed']
+        integer_keys={'tid','evoTID','starLv','level','gs','extraAmount','showEvoTID',
+                      'styleID','accessoryID','backgroundID','showAuroraID'}
+        bool_keys={'isGet','isShinyUnlocked','showShiny'}
+        feed_keys={'petTid','feedLevel','feedGrowth','feedCount','shinyFoodCnt'}
+        if not isinstance(observed,dict) or set(observed)-integer_keys-bool_keys-{'captured_at','feed'}:
+            raise ValueError('游戏观测字段无效')
+        try:
+            stamp=datetime.fromisoformat(observed['captured_at'])
+            if stamp.tzinfo is None: raise ValueError()
+        except (KeyError,ValueError,TypeError):
+            raise ValueError('游戏观测缺少有效读取时间') from None
+        if observed.get('tid')!=result['unit_id']:
+            raise ValueError('游戏观测与塔塔编号不符')
+        feed=observed.get('feed',{})
+        if not isinstance(feed,dict) or set(feed)-feed_keys:
+            raise ValueError('游戏观测喂养字段无效')
+        if any(type(v) is not int or not 0<=v<2**63 for k,v in observed.items() if k in integer_keys) or any(
+                type(v) is not int or not 0<=v<2**63 for v in feed.values()):
+            raise ValueError('游戏观测数值无效')
+        if any(type(v) is not bool for k,v in observed.items() if k in bool_keys):
+            raise ValueError('游戏观测标记无效')
+        result['game_observed']={**observed,'feed':dict(feed)}
     result['notes'] = str(pet.get('notes', ''))[:4000]
     return result
 
