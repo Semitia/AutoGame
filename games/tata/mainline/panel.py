@@ -1,319 +1,263 @@
-"""Local desktop workbench for manual rosters and explainable formation candidates."""
+"""Image-first Tata roster and drag/drop map workbench using local game art."""
 import argparse
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-
-from model import Catalog, DATA, DATASET, RUNTIME, ELEMENTS, load_roster, snapshot, write_json
-from policy import recommend, slots_for
+from tkinter import ttk, filedialog, messagebox, simpledialog
+from model import (Catalog, DATA, DATASET, RUNTIME, load_roster, snapshot, write_json,
+                   validate_pet, filtered_pets, shared_level_value, SharedLevelConflict)
+from formation import move_unit
+from policy import recommend
+from widgets import Art, Gallery, BattleBoard, ScrollArea, BG, PANEL, TEXT, MUTED, ACCENT
 
 
 class MainlinePanel:
     def __init__(self, root, catalog, state=RUNTIME/'roster.json'):
         self.root, self.catalog, self.state = root, catalog, Path(state)
-        self.pets, self.candidates, self.placements, self.images = [], [], {}, {}
-        self.plan_mode = 'manual'
-        root.title('Tata · 主线布阵工作台')
-        width = min(1120, root.winfo_screenwidth()-60)
-        height = min(760, root.winfo_screenheight()-100)
-        root.geometry(f'{width}x{height}'); root.minsize(min(980, width), min(680, height))
-        style = ttk.Style(root); style.theme_use('clam')
-        style.configure('.', font=('Microsoft YaHei UI', 10))
-        style.configure('Treeview', rowheight=30)
-        style.configure('Title.TLabel', font=('Microsoft YaHei UI', 21, 'bold'), foreground='#15344d')
-        style.configure('Hint.TLabel', foreground='#63758a')
-        outer = ttk.Frame(root, padding=20); outer.pack(fill='both', expand=True)
-        ttk.Label(outer, text='Tata 主线布阵', style='Title.TLabel').pack(anchor='w')
-        ttk.Label(outer, text='本地角色池  /  关卡数据  /  布阵候选', style='Hint.TLabel').pack(anchor='w', pady=(4, 15))
-        self.status = tk.StringVar(value='手动录入后自动保存到本机。尚未连接游戏账号。')
-        ttk.Label(outer, textvariable=self.status, style='Hint.TLabel', wraplength=1000).pack(side='bottom', anchor='w', pady=(10, 0))
-        self.tabs = ttk.Notebook(outer); self.tabs.pack(fill='both', expand=True)
-        roster = ttk.Frame(self.tabs, padding=15); stages = ttk.Frame(self.tabs, padding=15)
-        self.tabs.add(roster, text='  我的角色池  '); self.tabs.add(stages, text='  关卡与布阵  ')
-        self.build_roster(roster); self.build_stages(stages)
+        self.pets, self.placements, self.candidates = [], {}, []
+        self.selected_id, self.stage_data, self.ghost, self.drag_id = None, None, None, None
+        self.plan_mode, self.notes, self.read_error = 'manual', '', False
+        root.title('Tata · 图鉴与地图布阵'); root.configure(bg=BG)
+        width, height = min(1280,root.winfo_screenwidth()-70), min(820,root.winfo_screenheight()-100)
+        root.geometry(f'{width}x{height}'); root.minsize(min(1050,width),min(660,height))
+        self.level = tk.StringVar(value='1'); self.query = tk.StringVar()
+        self.status = tk.StringVar(value='点图片编辑；卡片底部切换拥有。所有塔塔共享等级。')
+        self.element = self.career = None; self.owned_only = tk.BooleanVar(value=False)
         if self.state.exists():
             try:
-                self.pets = load_roster(self.state, self.catalog)['pets']
+                value = self.read_profile(self.state)
+                self.pets, self.notes = value['pets'],value['notes']; self.level.set(str(value['shared_level']))
             except Exception as exc:
-                messagebox.showerror('角色池读取失败', str(exc), parent=root)
-        self.refresh_roster(); self.search(); self.load_stage()
+                self.read_error = True; self.status.set(f'角色池未载入，原文件已保留：{exc}')
+        self.art = Art(root); self.style()
+        header = ttk.Frame(root,padding=(18,12)); header.pack(fill='x')
+        ttk.Label(header,text='TATA / 主线工作台',style='Title.TLabel').pack(side='left')
+        for text, action in [('导入角色池',self.import_roster),('导出',self.export_roster),('保存等级',self.save_level)]:
+            ttk.Button(header,text=text,command=lambda f=action:self.guard(f)).pack(side='right',padx=5)
+        entry = ttk.Entry(header,textvariable=self.level,width=7); entry.pack(side='right')
+        entry.bind('<Return>',lambda _:self.guard(self.save_level))
+        ttk.Label(header,text='共享等级 Lv. ').pack(side='right')
+        ttk.Label(root,textvariable=self.status,style='Hint.TLabel',wraplength=1100,padding=(18,9)).pack(side='bottom',fill='x')
+        self.tabs = ttk.Notebook(root); self.tabs.pack(fill='both',expand=True,padx=12)
+        roster, battle = ttk.Frame(self.tabs,padding=8),ttk.Frame(self.tabs,padding=8)
+        self.tabs.add(roster,text='  塔塔图鉴 / 角色池  '); self.tabs.add(battle,text='  地图布阵  ')
+        self.filters(roster,True)
+        content = ttk.Frame(roster); content.pack(fill='both',expand=True,pady=(8,0))
+        self.gallery = Gallery(content,self); self.gallery.pack(side='left',fill='both',expand=True,padx=(0,12))
+        editor_host = ttk.Frame(content,width=290); editor_host.pack(side='right',fill='y'); editor_host.pack_propagate(False)
+        editor_scroll = ScrollArea(editor_host); editor_scroll.pack(fill='both',expand=True)
+        self.editor = editor_scroll.body
+        self.build_editor(); self.build_battle(battle)
+        self.query.trace_add('write',lambda *_:self.refresh())
+        self.level.trace_add('write',lambda *_:self.refresh_cards())
+        self.load_stage(); self.refresh()
+
+    def style(self):
+        s=ttk.Style(self.root); s.theme_use('clam')
+        s.configure('.',font=('Microsoft YaHei UI',10),background=BG,foreground=TEXT)
+        for widget in ('TFrame','TLabel','TCheckbutton'): s.configure(widget,background=BG,foreground=TEXT)
+        s.configure('Title.TLabel',font=('Microsoft YaHei UI',17,'bold'),foreground=ACCENT)
+        s.configure('Hint.TLabel',foreground=MUTED)
+        s.configure('TButton',background=PANEL,foreground=TEXT,padding=(8,6),bordercolor='#595070')
+        s.map('TButton',background=[('active','#5a4c78')])
+        s.configure('Active.TButton',background='#486321',foreground='#efffc8')
+        s.configure('TEntry',fieldbackground='#fcfbff',foreground='#201b35')
+        s.configure('TNotebook',background=BG,borderwidth=0)
+        s.configure('TNotebook.Tab',background=PANEL,foreground=MUTED,padding=(16,8))
+        s.map('TNotebook.Tab',background=[('selected','#554377')],foreground=[('selected','white')])
 
     def guard(self, action):
-        try:
-            return action()
+        try: return action()
         except Exception as exc:
-            messagebox.showerror('无法完成', str(exc), parent=self.root)
+            self.status.set(str(exc)); messagebox.showerror('无法完成',str(exc),parent=self.root)
 
-    def build_roster(self, parent):
-        tools = ttk.Frame(parent); tools.pack(fill='x', pady=(0, 12))
-        ttk.Label(tools, text='角色池由你录入；数据来源：APK 0.50.1。', style='Hint.TLabel').pack(side='left')
-        ttk.Button(tools, text='导入 JSON', command=lambda: self.guard(self.import_roster)).pack(side='right', padx=4)
-        ttk.Button(tools, text='导出 JSON', command=lambda: self.guard(self.export_roster)).pack(side='right')
-        body = ttk.Frame(parent); body.pack(fill='both', expand=True)
-        left = ttk.Frame(body); left.pack(side='left', fill='both', expand=True, padx=(0, 20))
-        searchbar = ttk.Frame(left); searchbar.pack(fill='x')
-        self.query = tk.StringVar()
-        ttk.Entry(searchbar, textvariable=self.query).pack(side='left', fill='x', expand=True)
-        ttk.Button(searchbar, text='搜索宠物', command=self.search).pack(side='left', padx=(8, 0))
-        self.query.trace_add('write', lambda *_: self.search())
-        self.catalog_box = ttk.Combobox(left, state='readonly'); self.catalog_box.pack(fill='x', pady=8)
-        self.catalog_box.bind('<<ComboboxSelected>>', lambda _: self.new_pet())
-        self.tree = ttk.Treeview(left, columns=('name', 'level', 'evolution', 'element'), show='headings', height=12)
-        for key, label, width in [('name', '已拥有的宠物', 170), ('level', '等级', 65), ('evolution', '进化', 65), ('element', '元素', 65)]:
-            self.tree.heading(key, text=label); self.tree.column(key, width=width, anchor='center')
-        self.tree.pack(fill='both', expand=True); self.tree.bind('<<TreeviewSelect>>', self.select_owned)
-        buttons = ttk.Frame(left); buttons.pack(fill='x', pady=10)
-        ttk.Button(buttons, text='新建录入', command=self.new_pet).pack(side='left')
-        ttk.Button(buttons, text='删除所选', command=lambda: self.guard(self.remove)).pack(side='left', padx=8)
-        self.count = tk.StringVar(); ttk.Label(buttons, textvariable=self.count, style='Hint.TLabel').pack(side='right')
-        right = ttk.LabelFrame(body, text='宠物详情', padding=14); right.pack(side='right', fill='both')
-        self.portrait = ttk.Label(right, text='选择宠物', anchor='center', width=25); self.portrait.pack(pady=6)
-        self.pet_title = tk.StringVar(value='从左侧选择宠物')
-        ttk.Label(right, textvariable=self.pet_title, font=('Microsoft YaHei UI', 13, 'bold')).pack(pady=5)
-        form = ttk.Frame(right); form.pack(fill='x')
-        self.fields = {}
-        for i, (key, label, default) in enumerate([('level', '等级', '1'), ('evolution', '进化阶段', '1'),
-                ('stars', '星级', '0'), ('skill_level', '技能等级', '1'), ('atk', '面板攻击（选填）', ''),
-                ('def', '面板防御（选填）', ''), ('hp', '面板生命（选填）', ''), ('notes', '装备 / 其他备注', '')]):
-            self.fields[key] = tk.StringVar(value=default)
-            ttk.Label(form, text=label).grid(row=i, column=0, sticky='w', pady=3)
-            ttk.Entry(form, textvariable=self.fields[key], width=19).grid(row=i, column=1, padx=(12, 0), pady=3)
-        self.evo_hint = tk.StringVar()
-        ttk.Label(right, textvariable=self.evo_hint, style='Hint.TLabel', wraplength=320).pack(anchor='w', pady=8)
-        ttk.Button(right, text='保存到角色池', command=lambda: self.guard(self.save_pet)).pack(fill='x', pady=5)
-        ttk.Label(right, text='星级 / 技能 / 装备：仅记录，尚未参与评分。', style='Hint.TLabel', wraplength=280).pack(anchor='w', pady=4)
-        self.editing_id = None
+    def read_profile(self, path):
+        try:
+            return load_roster(path,self.catalog)
+        except SharedLevelConflict as exc:
+            level = simpledialog.askinteger('迁移旧角色池',
+                f'旧版记录了不同等级：{exc.levels}\n所有塔塔共享等级，请填实际等级：',
+                minvalue=1,maxvalue=100000,parent=self.root)
+            if level is None:
+                raise ValueError('已取消等级确认，原角色池未改动') from None
+            return load_roster(path,self.catalog,shared_level_override=level)
 
-    def search(self):
-        query = self.query.get().strip().casefold()
-        self.filtered = [int(k) for k in sorted(self.catalog.pets, key=int)
-                         if query in f'{k} {self.catalog.name(k)} {self.catalog.pets[k]["Name"]}'.casefold()]
-        self.catalog_box['values'] = [f'{k} · {self.catalog.name(k)}' for k in self.filtered]
-        if self.filtered:
-            self.catalog_box.current(0)
+    def filters(self,parent,owned_toggle=False):
+        box=ttk.Frame(parent); box.pack(fill='x')
+        top=ttk.Frame(box); top.pack(fill='x',pady=3)
+        ttk.Label(top,text='找塔塔  ').pack(side='left')
+        ttk.Entry(top,textvariable=self.query,width=21).pack(side='left')
+        ttk.Button(top,text='重置筛选',command=self.reset_filters).pack(side='left',padx=8)
+        if owned_toggle: ttk.Checkbutton(top,text='只看已拥有',variable=self.owned_only,command=self.refresh).pack(side='left')
+        for label,table,kind in [('职业',self.catalog.careers,'career'),('元素',self.catalog.elements,'element')]:
+            row=ttk.Frame(box); row.pack(fill='x',pady=2)
+            ttk.Label(row,text=label+'  ').pack(side='left')
+            ttk.Button(row,text='全部',width=4,command=lambda k=kind:self.set_filter(k,None)).pack(side='left',padx=2)
+            for key,info in sorted(table.items(),key=lambda kv:int(kv[0])):
+                name=info.get('ShowName') or {2:'水',3:'火',4:'草',5:'电',6:'岩'}.get(int(key),key)
+                icon=self.art.image(info.get('IconName',''),22,22)
+                button=ttk.Button(row,text=name,width=4,image=icon or '',compound='left',command=lambda k=kind,v=int(key):self.set_filter(k,v))
+                button.pack(side='left',padx=2)
+                if not hasattr(self,'filter_buttons'): self.filter_buttons=[]
+                self.filter_buttons.append((button,kind,int(key)))
 
-    def new_pet(self):
-        index = self.catalog_box.current()
-        if index < 0 or index >= len(self.filtered):
-            return
-        self.editing_id = self.filtered[index]
-        for key, value in self.fields.items():
-            value.set('1' if key in ('level', 'evolution', 'skill_level') else '0' if key == 'stars' else '')
-        self.update_portrait()
+    def set_filter(self,kind,value): setattr(self,kind,value); self.refresh()
+    def reset_filters(self):
+        self.element=self.career=None; self.query.set(''); self.owned_only.set(False); self.refresh()
+    def visible_ids(self,battle=False):
+        return filtered_pets(self.catalog,self.pets,self.query.get(),self.element,self.career,battle or self.owned_only.get())
+    def refresh_cards(self):
+        for name in ('gallery','battle_gallery'):
+            if hasattr(self,name): getattr(self,name).draw()
+    def refresh(self):
+        self.refresh_cards()
+        if hasattr(self,'board'): self.board.draw()
+        for button,kind,value in getattr(self,'filter_buttons',[]):
+            button.configure(style='Active.TButton' if getattr(self,kind)==value else 'TButton')
+        if hasattr(self,'roster_count'): self.roster_count.set(f'已拥有 {len(self.pets)} / {len(self.catalog.pets)} 种塔塔')
 
+    def build_editor(self):
+        self.roster_count=tk.StringVar(); ttk.Label(self.editor,textvariable=self.roster_count,foreground=ACCENT).pack(anchor='w')
+        self.portrait=ttk.Label(self.editor,anchor='center'); self.portrait.pack(pady=8)
+        self.pet_title=tk.StringVar(value='点击左侧塔塔图片')
+        ttk.Label(self.editor,textvariable=self.pet_title,font=('Microsoft YaHei UI',13,'bold')).pack()
+        self.pet_subtitle=tk.StringVar(value='所有塔塔使用顶部共享等级')
+        ttk.Label(self.editor,textvariable=self.pet_subtitle,style='Hint.TLabel',wraplength=250).pack(pady=6)
+        self.forms=ttk.Frame(self.editor); self.forms.pack(fill='x',pady=8)
+        self.fields={k:tk.StringVar(value=v) for k,v in [('evolution','1'),('stars','0'),('skill_level','1'),('atk',''),('def',''),('hp',''),('notes','')]}
+        form=ttk.Frame(self.editor); form.pack(fill='x')
+        for i,(key,title) in enumerate([('stars','星级'),('skill_level','技能等级'),('atk','攻击（选填）'),('def','防御（选填）'),('hp','生命（选填）'),('notes','装备 / 备注')]):
+            ttk.Label(form,text=title).grid(row=i,column=0,sticky='w',pady=4)
+            ttk.Entry(form,textvariable=self.fields[key],width=16).grid(row=i,column=1,padx=(10,0),pady=4)
+        ttk.Button(self.editor,text='收入角色池 / 保存修改',command=lambda:self.guard(self.save_pet)).pack(fill='x',pady=(14,4))
+        ttk.Button(self.editor,text='从角色池移出',command=lambda:self.guard(lambda:self.toggle_owned(self.selected_id,True))).pack(fill='x')
+        ttk.Label(self.editor,text='点形态图片切换进化阶段。\n卡片底部可快速收入 / 移出。\n星级、技能与装备暂未参与评分。',style='Hint.TLabel',wraplength=245).pack(anchor='w',pady=10)
+
+    def select_pet(self,uid):
+        self.selected_id=uid
+        pet=next((p for p in self.pets if p['unit_id']==uid),dict(unit_id=uid,evolution=1,stars=0,skill_level=1))
+        for key,value in self.fields.items(): value.set('' if pet.get(key) is None else str(pet[key]))
+        for child in self.forms.winfo_children(): child.destroy()
+        for e in sorted(self.catalog.evolutions[str(uid)],key=int):
+            icon=self.art.image(self.catalog.resource(uid,int(e)).get('IconName',''),42,42)
+            ttk.Button(self.forms,text=e,width=4,image=icon or '',compound='top',command=lambda evo=e:self.set_evolution(evo)).pack(side='left',padx=2)
+        self.update_portrait(); self.refresh_cards()
+    def set_evolution(self,evolution): self.fields['evolution'].set(str(evolution)); self.update_portrait()
     def update_portrait(self):
-        key = self.editing_id
-        if key is None:
-            return
-        try:
-            evolution = int(self.fields['evolution'].get())
-        except ValueError:
-            evolution = 1
-        self.pet_title.set(f'{self.catalog.name(key, evolution)} · #{key}')
-        self.evo_hint.set('可用进化阶段：'+'、'.join(sorted(self.catalog.evolutions[str(key)], key=int)))
-        icon = Path(self.catalog.resource(key, evolution).get('IconName', '')).stem
-        path = RUNTIME/'icons'/f'{icon}.png'
-        if path.exists():
-            if icon not in self.images:
-                image = tk.PhotoImage(file=str(path))
-                scale = max(1, (max(image.width(), image.height())+95)//96)
-                self.images[icon] = image.subsample(scale)
-            self.portrait.configure(image=self.images[icon], text='')
-        else:
-            self.portrait.configure(image='', text=f'[{ELEMENTS.get(self.catalog.pets[str(key)].get("UnitElement"), "?")}] 头像暂缺')
+        uid=self.selected_id
+        if uid is None: return
+        evolution=int(self.fields['evolution'].get())
+        image=self.art.image(self.catalog.resource(uid,evolution).get('IconName',''),110,110)
+        self.portrait.configure(image=image or '',text='' if image else '头像尚缺')
+        self.pet_title.set(self.catalog.name(uid,evolution))
+        unit=self.catalog.pets[str(uid)]; career=self.catalog.careers.get(str(unit.get('UnitCareer')),{}).get('ShowName','')
+        self.pet_subtitle.set(f'编号 {uid} · {career} · 形态 {evolution} · 共享 Lv.{self.level.get()}')
 
-    def select_owned(self, _=None):
-        selected = self.tree.selection()
-        if not selected:
-            return
-        pet = next(p for p in self.pets if str(p['unit_id']) == selected[0])
-        self.editing_id = pet['unit_id']
-        for key, value in self.fields.items():
-            value.set('' if pet.get(key) is None else str(pet[key]))
-        self.update_portrait()
-
-    def persist(self):
-        value = snapshot(self.pets, self.catalog)
-        write_json(self.state, value); self.pets = value['pets']
-        self.candidates = []; self.placements = {}
-        self.results.delete(*self.results.get_children())
-        self.refresh_roster(); self.draw_board()
-        self.status.set(f'已保存 {len(self.pets)} 只宠物 · {self.state}')
-
+    def persist(self,pets=None):
+        if self.read_error: raise ValueError('原角色池读取失败，已禁止覆盖；请修正原文件或导入有效角色池')
+        value=snapshot(self.pets if pets is None else pets,self.catalog,self.notes,shared_level=self.level.get())
+        if self.state.exists(): self.state.with_suffix('.previous.json').write_bytes(self.state.read_bytes())
+        write_json(self.state,value); self.pets=value['pets']
+        ids={p['unit_id'] for p in self.pets}; self.placements={k:v for k,v in self.placements.items() if v in ids}
+        self.candidates=[]
+        if hasattr(self,'candidate_box'): self.candidate_box['values']=[]; self.candidate_box.set('')
+        self.refresh(); self.status.set(f'已保存：共享 Lv.{value["shared_level"]}，角色池 {len(self.pets)} 只')
+    def save_level(self): shared_level_value(self.level.get()); self.persist(); self.update_portrait()
     def save_pet(self):
-        if self.editing_id is None:
-            raise ValueError('请先在宠物目录中选择一只宠物')
-        from model import validate_pet
-        pet = validate_pet(dict(unit_id=self.editing_id, **{k: v.get() for k, v in self.fields.items()}), self.catalog)
-        old = self.pets
-        self.pets = [p for p in old if p['unit_id'] != self.editing_id] + [pet]
-        try:
-            self.persist()
-        except Exception:
-            self.pets = old
-            raise
-        self.update_portrait()
-
-    def remove(self):
-        selected = self.tree.selection()
-        if selected:
-            old = self.pets
-            self.pets = [p for p in old if str(p['unit_id']) != selected[0]]
-            try:
-                self.persist()
-            except Exception:
-                self.pets = old
-                raise
-
-    def refresh_roster(self):
-        self.tree.delete(*self.tree.get_children())
-        for p in sorted(self.pets, key=lambda p: p['unit_id']):
-            self.tree.insert('', 'end', iid=str(p['unit_id']), values=(self.catalog.name(p['unit_id'], p['evolution']),
-                p['level'], p['evolution'], ELEMENTS.get(self.catalog.pets[str(p['unit_id'])].get('UnitElement'), '?')))
-        self.count.set(f'已录入 {len(self.pets)} 只')
-        self.assign_ids = [p['unit_id'] for p in self.pets]
-        self.assign_box['values'] = ['清空格子']+[f'{p["unit_id"]} · {self.catalog.name(p["unit_id"], p["evolution"])}' for p in self.pets]
-        self.assign_box.current(0)
-
+        if self.selected_id is None: raise ValueError('请先点击一张塔塔卡片')
+        pet=validate_pet(dict(unit_id=self.selected_id,**{k:v.get() for k,v in self.fields.items()}),self.catalog)
+        self.persist([p for p in self.pets if p['unit_id']!=self.selected_id]+[pet])
+    def toggle_owned(self,uid,remove_only=False):
+        if uid is None: return
+        owned=any(p['unit_id']==uid for p in self.pets)
+        if owned: self.persist([p for p in self.pets if p['unit_id']!=uid])
+        elif not remove_only: self.persist(self.pets+[validate_pet(dict(unit_id=uid),self.catalog)])
+        self.select_pet(uid)
     def import_roster(self):
-        path = filedialog.askopenfilename(title='导入角色池', filetypes=[('角色池 JSON', '*.json')])
-        if path:
-            value = load_roster(path, self.catalog)
-            old = self.pets
-            self.pets = value['pets']
-            try:
-                self.persist()
-            except Exception:
-                self.pets = old
-                raise
-
-    def export_roster(self):
-        path = filedialog.asksaveasfilename(title='导出角色池', defaultextension='.json', initialfile='tata-roster.json')
-        if path:
-            write_json(path, snapshot(self.pets, self.catalog)); self.status.set('角色池已导出：'+path)
-
-    def build_stages(self, parent):
-        toolbar = ttk.Frame(parent); toolbar.pack(fill='x')
-        ttk.Label(toolbar, text='关卡名称或编号').pack(side='left')
-        self.stage_query = tk.StringVar(value='1-1')
-        ttk.Entry(toolbar, textvariable=self.stage_query, width=15).pack(side='left', padx=8)
-        ttk.Button(toolbar, text='加载关卡', command=lambda: self.guard(self.load_stage)).pack(side='left')
-        ttk.Button(toolbar, text='生成候选', command=lambda: self.guard(self.plan)).pack(side='left', padx=8)
-        ttk.Button(toolbar, text='保存当前布阵', command=lambda: self.guard(self.save_plan)).pack(side='right')
-        self.stage_info = tk.StringVar()
-        ttk.Label(parent, textvariable=self.stage_info, wraplength=1000).pack(anchor='w', pady=12)
-        self.results = ttk.Treeview(parent, columns=('candidate', 'score', 'pets'), show='headings', height=3)
-        for key, title, width in [('candidate', '候选', 80), ('score', '偏好分', 90), ('pets', '宠物选择', 720)]:
-            self.results.heading(key, text=title); self.results.column(key, width=width)
-        self.results.pack(fill='x'); self.results.bind('<<TreeviewSelect>>', self.choose_candidate)
-        controls = ttk.Frame(parent); controls.pack(fill='x', pady=12)
-        ttk.Label(controls, text='手动布阵：选择宠物，再点格子').pack(side='left')
-        self.assign_box = ttk.Combobox(controls, state='readonly', width=30); self.assign_box.pack(side='left', padx=8)
-        self.board = ttk.Frame(parent); self.board.pack(fill='x')
-        self.details = tk.Text(parent, height=9, wrap='word', relief='flat', padx=10, pady=10, font=('Microsoft YaHei UI', 10))
-        self.details.pack(fill='both', expand=True, pady=(12, 0)); self.details.configure(state='disabled')
-        self.stage_data = None
-
-    def explain(self, text):
-        self.details.configure(state='normal'); self.details.delete('1.0', 'end')
-        self.details.insert('end', text); self.details.configure(state='disabled')
-
-    def load_stage(self):
-        query = self.stage_query.get().strip()
-        row = next((s for s in self.catalog.stages if s['name'] == query), None)
-        key = row['id'] if row else query
-        data = self.catalog.stage(key)
-        self.stage_data = data; self.candidates = []; self.placements = {}
-        self.results.delete(*self.results.get_children())
-        summary = self.catalog.stage_index[str(data['stage']['ID'])]
-        enemies = '、'.join(f'{self.catalog.name(k)} ×{v}' for k, v in summary['enemies'].items())
-        self.stage_info.set(f'{data["stage"]["DisplayName"]}  ·  最多 {summary["deploy_limit"]} 只  ·  出怪 {summary["enemy_count"]} 只\n{enemies}')
-        self.draw_board()
-        self.explain('当前为启发式候选 v0：按稀有度、等级和敌人元素覆盖选宠物，未模拟战斗。\n位置可手动调整；未给出伤害或通关率。\n关卡列表来自 APK 配置，可能含当前未开放关卡。')
-
-    def draw_board(self):
-        for child in self.board.winfo_children():
-            child.destroy()
-        if self.stage_data is None:
-            return
+        path=filedialog.askopenfilename(title='导入角色池',filetypes=[('角色池 JSON','*.json')])
+        if not path: return
+        value=self.read_profile(path); old=(self.pets,self.notes,self.level.get(),self.read_error)
         try:
-            slots = slots_for(self.stage_data)
-        except ValueError as exc:
-            ttk.Label(self.board, text=str(exc)).pack(); return
-        rows = sorted({y for _, y in slots})
-        for x, y in slots:
-            key = (x, y); unit_id = self.placements.get(key)
-            text = self.catalog.name(unit_id) if unit_id else '＋ 空位'
-            ttk.Button(self.board, text=f'{text}\n({x}, {y})', command=lambda k=key: self.guard(lambda: self.place(k))).grid(
-                row=rows.index(y), column=x-1, padx=4, pady=4, sticky='nsew', ipady=9)
-            self.board.columnconfigure(x-1, weight=1)
+            self.read_error=False; self.notes=value['notes']; self.level.set(str(value['shared_level'])); self.persist(value['pets'])
+        except Exception:
+            self.pets,self.notes,level,self.read_error=old; self.level.set(level); self.refresh(); raise
+    def export_roster(self):
+        path=filedialog.asksaveasfilename(title='导出角色池',defaultextension='.json',initialfile='tata-roster.json')
+        if path: write_json(path,snapshot(self.pets,self.catalog,self.notes,shared_level=self.level.get())); self.status.set('已导出：'+path)
 
-    def place(self, slot):
-        index = self.assign_box.current()
-        if index <= 0:
-            self.placements.pop(slot, None)
-        else:
-            unit_id = self.assign_ids[index-1]
-            allowed = set(self.stage_data['waves'].get('CanUsePetIDs', {}).values())
-            if allowed and unit_id not in allowed:
-                raise ValueError('此宠物不符合该关卡的限制')
-            previous = next((k for k, v in self.placements.items() if v == unit_id), None)
-            if slot not in self.placements and previous is None and len(self.placements) >= self.stage_data['waves']['CanDeployNum']:
-                raise ValueError('超过关卡上阵数量限制')
-            if previous:
-                self.placements.pop(previous)
-            self.placements[slot] = unit_id
-        self.draw_board()
-        self.plan_mode = 'manual'
-        self.explain('当前为手动布阵，未模拟战斗。保存时会附带角色池快照。')
-
+    def build_battle(self,parent):
+        toolbar=ttk.Frame(parent); toolbar.pack(fill='x',pady=(0,8)); self.stage_query=tk.StringVar(value='1-1')
+        ttk.Label(toolbar,text='关卡').pack(side='left')
+        entry=ttk.Entry(toolbar,textvariable=self.stage_query,width=12); entry.pack(side='left',padx=6)
+        entry.bind('<Return>',lambda _:self.guard(self.load_stage))
+        ttk.Button(toolbar,text='加载',command=lambda:self.guard(self.load_stage)).pack(side='left')
+        ttk.Button(toolbar,text='一键候选',command=lambda:self.guard(self.plan)).pack(side='left',padx=6)
+        self.candidate_box=ttk.Combobox(toolbar,state='readonly',width=18); self.candidate_box.pack(side='left')
+        self.candidate_box.bind('<<ComboboxSelected>>',lambda _:self.choose_candidate(self.candidate_box.current()))
+        ttk.Button(toolbar,text='保存布阵',command=lambda:self.guard(self.save_plan)).pack(side='right')
+        ttk.Button(toolbar,text='清空',command=self.clear_board).pack(side='right',padx=6)
+        content=ttk.Frame(parent); content.pack(fill='both',expand=True)
+        left=ttk.Frame(content); left.pack(side='left',fill='both',expand=True,padx=(0,10)); self.filters(left)
+        ttk.Label(left,text='拖卡片上阵 · 地图内拖动交换位置 · 拖回卡片区下阵',foreground=ACCENT).pack(anchor='w',pady=8)
+        self.battle_gallery=Gallery(left,self,True); self.battle_gallery.pack(fill='both',expand=True)
+        self.reason=tk.StringVar(value='启发式候选未模拟战斗，位置顺序填充。')
+        ttk.Label(left,textvariable=self.reason,style='Hint.TLabel',wraplength=590).pack(fill='x',pady=6)
+        right=ttk.Frame(content,width=440); right.pack(side='right',fill='both'); right.pack_propagate(False)
+        self.board=BattleBoard(right,self); self.board.pack(fill='both',expand=True)
+    def load_stage(self):
+        query=self.stage_query.get().strip(); row=next((s for s in self.catalog.stages if s['name']==query),None)
+        self.stage_data=self.catalog.stage(row['id'] if row else query); self.clear_board()
+        reference=self.catalog.battle_resources.get(str(self.stage_data['battle'].get('ResID')),{}).get('BackgroundRes','')
+        if not self.read_error:
+            self.status.set('已载入原地图与关卡约束' if self.art.path(reference) else '关卡数据已载入；此章贴图未包含在本地资源中')
+    def clear_board(self):
+        self.placements={}; self.candidates=[]; self.plan_mode='manual'
+        self.candidate_box['values']=[]; self.candidate_box.set(''); self.refresh()
+    def place(self,uid,target):
+        self.placements=move_unit(self.stage_data,self.pets,self.placements,uid,target)
+        self.plan_mode='manual'; self.refresh(); self.status.set('已调整布阵 · 未模拟战斗；可保存本地方案')
+    def begin_drag(self,uid):
+        self.drag_id=uid; self.select_pet(uid)
+        self.ghost=tk.Toplevel(self.root); self.ghost.overrideredirect(True); self.ghost.attributes('-topmost',True)
+        pet=next(p for p in self.pets if p['unit_id']==uid)
+        image=self.art.image(self.catalog.resource(uid,pet['evolution']).get('IconName',''),72,72)
+        tk.Label(self.ghost,image=image or '',text='' if image else self.catalog.name(uid),bg=PANEL).pack()
+    def drag_at(self,x,y):
+        if self.ghost: self.ghost.geometry(f'+{x+18}+{y+18}')
+    def finish_drag(self,x,y):
+        if self.ghost: self.ghost.destroy(); self.ghost=None
+        uid,self.drag_id=self.drag_id,None
+        if uid is None: return
+        target=self.board.hit(x,y); g=self.battle_gallery
+        over_gallery=g.winfo_rootx()<=x<g.winfo_rootx()+g.winfo_width() and g.winfo_rooty()<=y<g.winfo_rooty()+g.winfo_height()
+        if target is not None or over_gallery:
+            try: self.place(uid,target)
+            except ValueError as exc: self.status.set(str(exc))
     def plan(self):
-        if self.stage_data is None:
-            raise ValueError('请先加载关卡')
-        self.candidates = recommend(self.catalog, self.stage_data, self.pets)
-        self.results.delete(*self.results.get_children())
-        for i, candidate in enumerate(self.candidates):
-            names = '、'.join(self.catalog.name(p['unit_id']) for p in candidate['placements'])
-            self.results.insert('', 'end', iid=str(i), values=(f'候选 {i+1}', candidate['score'], names))
-        self.results.selection_set('0'); self.choose_candidate()
-        self.status.set('已生成启发式候选；位置顺序填充，尚未模拟战斗。')
-
-    def choose_candidate(self, _=None):
-        selected = self.results.selection()
-        if not selected or not self.candidates:
-            return
-        candidate = self.candidates[int(selected[0])]
-        self.plan_mode = candidate['mode']
-        self.placements = {(p['x'], p['y']): p['unit_id'] for p in candidate['placements']}
-        self.draw_board()
-        self.explain('\n'.join(f'{self.catalog.name(k)}：{v}' for k, v in candidate['reasons'].items())+'\n\n'+'；'.join(candidate['limitations']))
-
+        self.candidates=recommend(self.catalog,self.stage_data,self.pets)
+        self.candidate_box['values']=[f'候选 {i+1} · {c["score"]}' for i,c in enumerate(self.candidates)]
+        self.candidate_box.current(0); self.choose_candidate(0)
+    def choose_candidate(self,index):
+        if not 0<=index<len(self.candidates): return
+        candidate=self.candidates[index]; self.placements={(p['x'],p['y']):p['unit_id'] for p in candidate['placements']}
+        self.plan_mode=candidate['mode']; self.reason.set('；'.join(candidate['limitations'])); self.refresh()
     def save_plan(self):
-        if not self.placements:
-            raise ValueError('请先生成候选或手动布阵')
-        path = filedialog.asksaveasfilename(title='保存布阵', initialdir=str(RUNTIME), defaultextension='.json', initialfile=f'plan-{self.stage_data["stage"]["ID"]}.json')
+        if not self.placements: raise ValueError('请先拖入塔塔或生成候选')
+        path=filedialog.asksaveasfilename(title='保存布阵',defaultextension='.json',initialfile=f'plan-{self.stage_data["stage"]["ID"]}.json')
         if path:
-            write_json(path, dict(schema_version=1, simulated=False, stage_id=self.stage_data['stage']['ID'],
-                data_version='apk-0.50.1', policy=self.plan_mode, roster=snapshot(self.pets, self.catalog),
-                placements=[dict(unit_id=v, x=k[0], y=k[1]) for k, v in self.placements.items()]))
-            self.status.set('布阵已保存：'+path)
+            write_json(path,dict(schema_version=2,simulated=False,stage_id=self.stage_data['stage']['ID'],data_version='apk-0.50.1',policy=self.plan_mode,
+                roster=snapshot(self.pets,self.catalog,self.notes,shared_level=self.level.get()),placements=[dict(unit_id=v,x=k[0],y=k[1]) for k,v in self.placements.items()]))
+            self.status.set('已保存布阵：'+path)
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data', type=Path, default=DATA)
-    parser.add_argument('--dataset', type=Path, default=DATASET)
-    parser.add_argument('--state', type=Path, default=RUNTIME/'roster.json')
-    args = parser.parse_args()
-    root = tk.Tk()
-    try:
-        MainlinePanel(root, Catalog(args.data, args.dataset), args.state)
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--data',type=Path,default=DATA); parser.add_argument('--dataset',type=Path,default=DATASET)
+    parser.add_argument('--state',type=Path,default=RUNTIME/'roster.json')
+    args=parser.parse_args(); root=tk.Tk()
+    try: MainlinePanel(root,Catalog(args.data,args.dataset),args.state)
     except Exception as exc:
-        root.withdraw()
-        messagebox.showerror('主线数据尚未准备', f'{exc}\n\n请先按 games/tata/mainline/README.md 导出本地配置与关卡数据。', parent=root)
-        root.destroy(); return
+        root.withdraw(); messagebox.showerror('主线工作台未能启动',str(exc),parent=root); root.destroy(); return
     root.mainloop()
 
 
-if __name__ == '__main__':
-    main()
+if __name__=='__main__': main()

@@ -1,5 +1,4 @@
 """Explainable, bounded roster selection baseline. No battle simulation or position score."""
-import math
 
 
 def slots_for(stage):
@@ -40,9 +39,10 @@ def recommend(catalog, stage, pets, top_k=3, beam_width=64):
         weakness = sum(n for k, n in enemy_counts.items()
                        if stage['enemy_units'][k].get('UnitElement') in weak) / total
         quality = catalog.quality(pet)
-        score = 2*quality + math.log2(1+pet['level']) + 3*coverage - 2*weakness
+        # Shared account level cannot distinguish individual pets.
+        score = 2*quality + 3*coverage - 2*weakness
         options.append(dict(pet=pet, score=score, element=unit.get('UnitElement'),
-                            reason=f'稀有度编号 {quality}；等级 {pet["level"]}；克制覆盖 {coverage:.0%}；弱势覆盖 {weakness:.0%}'))
+                            reason=f'稀有度编号 {quality}；克制覆盖 {coverage:.0%}；弱势覆盖 {weakness:.0%}'))
     options.sort(key=lambda x: (-x['score'], x['pet']['unit_id']))
     if not options:
         raise ValueError('当前角色池没有符合关卡限制的宠物')
@@ -62,11 +62,11 @@ def recommend(catalog, stage, pets, top_k=3, beam_width=64):
     results = []
     for selected, score in beam[:top_k]:
         chosen = [options[i] for i in selected]
-        results.append(dict(score=round(score, 3), mode='heuristic-v0', simulated=False,
+        results.append(dict(score=round(score, 3), mode='heuristic-v1', simulated=False,
                             placements=[dict(unit_id=c['pet']['unit_id'], x=slots[i][0], y=slots[i][1])
                                         for i, c in enumerate(chosen)],
                             reasons={str(c['pet']['unit_id']): c['reason'] for c in chosen},
-                            limitations=['分数是稀有度、等级、元素覆盖的偏好分，不是伤害或胜率',
+                            limitations=['共享等级仅记录；分数是稀有度和元素覆盖的偏好分，不是伤害或胜率',
                                          '格子按顺序放置，位置效果未优化',
                                          '进化用于稀有度；星级、技能等级、装备与面板属性尚未进入评分',
                                          '每种宠物最多选择一只；未模拟战斗']))

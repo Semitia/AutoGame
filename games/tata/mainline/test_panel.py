@@ -17,15 +17,21 @@ class PanelIntegrationTests(unittest.TestCase):
             root = tk.Tk(); root.withdraw()
             try:
                 app = MainlinePanel(root, catalog, path)
-                for i in range(4):
-                    app.catalog_box.current(i); app.new_pet()
-                    app.fields['level'].set(str(10+i)); app.save_pet()
+                self.assertNotIn('level',app.fields)
+                app.level.set('234'); app.save_level()
+                for uid in list(sorted(map(int,catalog.pets)))[:4]:
+                    app.select_pet(uid); app.save_pet()
                 self.assertEqual(len(load_roster(path, catalog)['pets']), 4)
                 app.plan()
                 self.assertEqual(len(app.placements), 3)
-                self.assertTrue(all(v in app.assign_ids for v in app.placements.values()))
-                app.assign_box.current(0); app.place(next(iter(app.placements)))
+                self.assertTrue(all(v in {p['unit_id'] for p in app.pets} for v in app.placements.values()))
+                app.place(next(iter(app.placements.values())),None)
                 self.assertEqual(len(app.placements), 2)
+                app.set_filter('element',2)
+                self.assertTrue(all(catalog.pets[str(k)]['UnitElement']==2 for k in app.visible_ids()))
+                app.set_filter('career',3)
+                self.assertTrue(all(catalog.pets[str(k)]['UnitCareer']==3 for k in app.visible_ids()))
+                app.reset_filters()
                 app.stage_query.set('2-21'); app.load_stage()
                 self.assertEqual(app.stage_data['stage']['ID'], 101)
                 self.assertFalse(app.placements)
@@ -35,7 +41,8 @@ class PanelIntegrationTests(unittest.TestCase):
             try:
                 app = MainlinePanel(root, catalog, path)
                 self.assertEqual(len(app.pets), 4)
-                self.assertEqual(app.pets[0]['level'], 10)
+                self.assertEqual(app.level.get(),'234')
+                self.assertTrue(all('level' not in p for p in app.pets))
             finally:
                 root.destroy()
 

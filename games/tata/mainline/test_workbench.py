@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import unittest
 
 from model import load_roster, snapshot, validate_pet, write_json
+from formation import move_unit
 from policy import recommend, slots_for
 
 
@@ -24,18 +25,52 @@ def stage():
 class WorkbenchTests(unittest.TestCase):
     def test_roster_roundtrip_and_validation(self):
         c = catalog()
-        value = snapshot([{'unit_id': 1, 'level': 12, 'atk': '2.5', 'notes': '装备待确认'}], c)
+        value = snapshot([{'unit_id': 1, 'atk': '2.5', 'notes': '装备待确认'}], c, shared_level=234)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'roster.json'
             write_json(path, value)
             loaded = load_roster(path, c)
             self.assertEqual(loaded['pets'], value['pets'])
             self.assertEqual(loaded['source'], 'manual')
+            self.assertEqual(loaded['shared_level'], 234)
+            self.assertNotIn('level', loaded['pets'][0])
         for extra in [{'unit_id': 99}, {'level': '1.5'}, {'evolution': 9}, {'atk': 'nan'}, {'level': None}]:
             with self.subTest(extra=extra), self.assertRaises(ValueError):
                 validate_pet(dict({'unit_id': 1}, **extra), c)
         with self.assertRaises(ValueError):
             snapshot([{'unit_id': 1}, {'unit_id': 1}], c)
+
+    def test_shared_level_migration_and_conflicts(self):
+        c = catalog()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'old.json'
+            old = dict(schema_version=1, data_version='apk-0.50.1', pets=[dict(unit_id=i, level=234) for i in (1,2)])
+            write_json(path, old)
+            value = load_roster(path, c)
+            self.assertEqual(value['schema_version'], 2)
+            self.assertEqual(value['shared_level'], 234)
+            self.assertTrue(all('level' not in p for p in value['pets']))
+            old['pets'][1]['level'] = 1
+            write_json(path, old); before=path.read_bytes()
+            with self.assertRaisesRegex(ValueError, '不同等级'): load_roster(path,c)
+            self.assertEqual(before,path.read_bytes())
+            migrated=load_roster(path,c,shared_level_override=234)
+            self.assertEqual(migrated['shared_level'],234)
+            self.assertEqual(len(migrated['pets']),2)
+            self.assertEqual(before,path.read_bytes())
+        for level in (0, '1.5', None, True):
+            with self.assertRaises(ValueError): snapshot([],c,shared_level=level)
+
+    def test_atomic_drag_swap_remove_and_invalid_drop(self):
+        c, s = catalog(), stage()
+        pets = snapshot([dict(unit_id=i) for i in (1,2,3)],c)['pets']
+        board = {(1,2):1,(2,2):2}
+        self.assertEqual(move_unit(s,pets,board,1,(2,2)),{(1,2):2,(2,2):1})
+        self.assertEqual(move_unit(s,pets,board,1,None),{(2,2):2})
+        self.assertEqual(move_unit(s,pets,board,3,(2,2)),{(1,2):1,(2,2):3})
+        for uid,target in [(3,(3,2)),(3,(5,8)),(99,(1,2))]:
+            with self.assertRaises(ValueError): move_unit(s,pets,board,uid,target)
+            self.assertEqual(board,{(1,2):1,(2,2):2})
 
     def test_candidates_respect_slots_limits_and_allowed_pets(self):
         c, s = catalog(), stage()
