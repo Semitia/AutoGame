@@ -6,14 +6,15 @@
 
 双击根目录 `Start-Tata-Mainline.cmd`，或 `python run.py tata mainline`。本机数据已准备；新环境需要按下方流程生成数据，面板依赖 Tkinter 与 Pillow。
 
-1. 顶部只编辑一次“共享等级”，所有卡片同步显示相同等级。角色池 schema v2 将其存为顶层 `shared_level`，单只宠物不再保存 level。
+1. 顶部只编辑一次“共享等级”，所有卡片同步显示相同等级。角色池 schema v3 将其存为顶层 `shared_level`，单只宠物不保存 level。
 2. “塔塔图鉴 / 角色池”默认列出所有宠物图片；按原游戏职业、元素筛选，可组合搜索中文名、形态名、英文代号和编号，或只看已拥有。卡片底部快速收入/移出，点击图片编辑，进化阶段通过形态缩略图切换。当前数据包含 68 种 Enable=true、UnitType=1 的宠物。
-3. 本机保存 `runtime/tata/mainline/roster.json`，上次版本备份为 `roster.previous.json`，支持 JSON 导入/导出。旧 v1 的等级一致时自动迁移；不一致时弹出共享等级输入框，需要用户确认，取消则保留原文件并禁止覆盖。属性可留空，装备暂以备注记录。
-4. “地图布阵”：输入关卡名称如 `1-1`、`11-26` 或数字 ID。按 StageBattle.ResID → StageBattleRes.BackgroundRes 加载实际贴图。上方按波次配置 Cols 汇总各列可能出现的敌人图标，并显示敌人等级；不是逐帧波次回放。
-5. 从已拥有图片区拖到格子上阵，地图内拖动移动/交换；拖回图片区或右键下阵。也支持点卡片再点格子。约束检查与 UI 分离，非法拖放不修改原方案。布局适配原贴图，逻辑 x/y 保持原值，UI 像素映射不是原 Unity 相机坐标。
-6. 可生成候选、手动调整，再保存布阵。方案附带角色池快照、数据版本、策略来源及 `simulated:false`。地图上的宠物目前用原头像图，不是 Spine 动画。
+3. 星级不再要求玩家输入总数：点“按星星 / 月亮图案选星级”，从原游戏图案中选择。每个形态的最低星级和下次进化门槛来自该宠物的 UnitEvolutionTrial；未完成试炼时可能保留较低形态，可勾选显示门槛后的图案。属性改为攻击/防御/生命的 E、D、C、B、A、S、SS、SSS 字母评级，选项按各宠物 UnitFeedLevel、当前星级及 PetFeedLevel 限制生成，保存时检查评级组合是否可达。只保留可能的养成状态，不把字母评级虚构成精确属性。
+4. 本机保存 `runtime/tata/mainline/roster.json`，上次版本备份为 `roster.previous.json`，支持 JSON 导入/导出。旧 v1 等级冲突时弹框确认，取消则保留原文件并禁止覆盖。旧 v1/v2 数值属性归档到 legacy_stats；与形态不符的旧星级转为未知并保留 migration_notes，待按图案确认。未知星级/评级可留空，装备暂以备注记录。
+5. “地图布阵”：输入关卡名称如 `1-1`、`11-26` 或数字 ID。按 StageBattle.ResID → StageBattleRes.BackgroundRes 加载实际贴图。上方按波次配置 Cols 汇总各列可能出现的敌人图标，并显示敌人等级；不是逐帧波次回放。部署几何已对照原字节码：GridY 实际设置横向边界，空值回退 1–5 列；纵向部署范围来自 BattleMode.DeployGrids。1-1 是中央 1 列 × 5 行，1-10 是 3 列 × 5 行，11-26 是 5 列 × 5 行；不能用 ColumnCount=5 或 GridY 的名字猜布局。
+6. 从已拥有图片区拖到格子上阵，地图内拖动移动/交换；拖回图片区或右键下阵。也支持点卡片再点格子。非法拖放不修改原方案。浅色格子是部署区，远端淡格子是战场。逻辑坐标保持原值，UI 像素映射不是原 Unity 相机坐标。
+7. 可生成候选、手动调整，再保存布阵。方案附带角色池快照、数据版本、策略来源及 `simulated:false`。地图上的宠物目前用原头像图，不是 Spine 动画。
 
-启发式 v1 使用有界束搜索选择宠物，每种至多一只，遵守可用宠物及上阵数量限制。偏好分 = 单宠物之和（2 × 稀有度编号 + 3 × 按敌人数加权的克制覆盖 − 2 × 弱势覆盖）+ 0.5 × 元素种类数。等级为共享字段，不用于宠物间排名。进化用于查当前稀有度；这是人工设定的搜索基线，**不是伤害公式、胜率或全局最优证明**。位置顺序填充，没有优化前后排、射程或弹道；星级、技能等级、装备和面板属性目前只保存。空 GridY 等未知约束明确拒绝生成位置。
+启发式 v1 使用有界束搜索选择宠物，每种至多一只，遵守可用宠物及上阵数量限制。偏好分 = 单宠物之和（2 × 稀有度编号 + 3 × 按敌人数加权的克制覆盖 − 2 × 弱势覆盖）+ 0.5 × 元素种类数。共享等级不用于宠物间排名。进化用于查当前稀有度；这是人工设定的搜索基线，**不是伤害公式、胜率或全局最优证明**。星级、属性评级、技能和装备尚未进入评分，位置尚未优化。
 
 角色池及图标均位于已忽略的 runtime。可选的本机头像提取：
 
@@ -23,7 +24,22 @@ python games/tata/mainline/extract_icons.py runtime/tata/research/inpackage_aa_1
 python games/tata/mainline/extract_icons.py runtime/tata/research/inpackage_aa_1.lpak --data runtime/tata/research/data-bytecode-0.50.1 --out runtime/tata/mainline/art
 ```
 
-扩展提取遍历 4,529 个 UnityFS bundle，得到 1,006 张本地图片，无解析错误，95 个引用资源未找到，清单见 `art/icon-report.json`。包括原宠物/敌人头像、职业/元素图标、品质框与第一章三张地图。其他章地图未包含于本次 APK 资源包，显示缺失提示和原逻辑格子，不拿其他地图替代；取得对应 PNG 后按引用文件名放入 art 即可加载。游戏资源不随仓库分发。
+APK 提取得到 1,006 张图片；进一步只读塔塔小游戏自己的缓存中 1,774 个 Unity bundle，补得 41 张图，包含第十一章沙漠地图、24 张星级图标、字母评级等；无解析错误。当前本地共 1,047 张图，地图有第一章三张和第十一章一张。资源来源及 bundle SHA-256 见 `art/cache-art-report.json`，不记录用户目录标识。
+
+面板“同步本机资源”会读取本机塔塔 applet 的 `__GAME_FILE_CACHE` 中 Unity bundle，补充缺失图片，不读聊天/语音、账号存档或执行脚本。游戏里下载过其他地图后可再同步；不承诺当前缓存已包含所有章节。也可用命令行明确指定缓存目录：
+
+```powershell
+python games/tata/mainline/extract_cached_art.py --cache-root "塔塔的 __GAME_FILE_CACHE 目录" --data runtime/tata/research/data-bytecode-0.50.1 --out runtime/tata/mainline/art
+```
+
+APK 和微信缓存的 FlatBuffers 资源目录均已解析，定位到 27 个战斗背景资源地址与对应 bundle；`inspect_catalog.py` 可查询这些依赖。目录有记录不代表文件已下载；直接猜 CDN 路径的尝试返回 404，尚未还原完整远程下载流程。缺图仍明确提示。所有游戏图片留在本机，不随仓库分发。
+
+```powershell
+python games/tata/mainline/inspect_catalog.py runtime/tata/research/catalog-content.bin --out runtime/tata/research/android-map-locations.json
+python games/tata/mainline/verify_rules.py --source runtime/tata/research/decoded-0.50.1 --data runtime/tata/research/data-bytecode-0.50.1 --dataset runtime/tata/research/dataset-bytecode-0.50.1 --out runtime/tata/research/rules-verification.json
+```
+
+规则对照报告验证了 6,400 个关卡的 field/deploy 矩形和 85 种星级表示，与原始字节码匹配，错误为 0。星级图案每 6 级换资源层，普通图案按新/旧颜色混排；73–78、79–84 为两组特殊图标，不能简单画 N 个同色星星。进化门槛例：11 号塔塔为 3/6/24，12 号为 6/18/30；原逻辑还有进化试炼，不能用星级唯一推断已完成的形态。
 
 ## 交互原则与客户端内嵌
 

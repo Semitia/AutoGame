@@ -42,7 +42,7 @@ Unity 版本为 `2022.3.62f3`，由 globalgamemanagers 和 libunity.so 交叉确
 - **6,037 个原始字节码全部可由 lupa.lua54 加载校验**，无需修补反编译文本。报告：`runtime/tata/research/bytecode-validation.json`。
 - 配置原始字节码和反编译文本分别导出：均得到 **3,122 / 3,166 个配置文件**，两条路线的 3,122 个 JSON 逐项相等。44 个配置需要额外环境或包含函数，隔离导出器明确报错，未伪造空表。报告：`runtime/tata/research/data-bytecode-0.50.1/export-report.json`、`comparison.json`。
 - Stage 表共 6,400 行、StageBattle 表共 6,400 行、Unit 表共 223 行；关卡 → 战斗 → 波次 → 敌人定义全量关联成功，无缺失。包括未开放/未来关卡的可能性未排除，223 个单位也含敌人，不能当作宠物数量。输出：`runtime/tata/research/dataset-bytecode-0.50.1/`。
-- 第一关 `1-1` 对应 `May1_N1_0`：CanDeployNum=3、ColumnCount=5、GridY={3}；Frame 8、40、60 各含 1 个 1101 敌人，合计 3 个。保留原始 Frame，暂未将它换算成秒。
+- 第一关 `1-1` 对应 `May1_N1_0`：CanDeployNum=3、ColumnCount=5、GridY={3}；但实际部署是 x=3 的一列、y=1–5 的五行。原 BattleModule 用 GridY 的 min/max 设置 X 与 width，行数来自 BattleMode，不能按字段名推断。Frame 8、40、60 各含 1 个 1101 敌人，合计 3 个，未换算成秒。
 
 ### 战斗核心已找到，并完成局部无界面执行
 
@@ -93,8 +93,16 @@ java -jar .local/unluac.jar runtime/tata/research/decoded-0.50.1/Config/UnitAttr
 1. 扩展原始字节码模块加载器，优先复用原始 class、IOC、表扩展、随机数和配置读取逻辑；隔离 Display/Unity 初始化，不能用空实现替代会影响战斗的接口。
 2. 创建真实 BattleEngine，接通实际 Unit/Projectile/Skill/EnemySpawn/EndCheck 系统和宠物数据；明确出生位置、动画事件与出手时机是否还依赖资源数据。当前最小 class 适配器仅用于局部探测，未证明完整兼容。
 3. 建立单关完整运行与固定随机种子回放，核对伤害、索敌、帧序和胜负后再测本地吞吐。当前没有可信的完整战斗性能数据。
-4. 图鉴式角色池、职业/元素筛选、原地图、敌人预览、拖放布阵与启发式 v1 已接入 Tkinter 工作台；角色池 schema v2 只保存账号共享等级（PetModel.GetPetLevel 读取 `_level`，已核实），不再给宠物单独等级。图片提取共 1,006 张，95 个引用未找到，当前只有第一章三张地图；缺图明确提示。原头像作为布阵静态预览，Spine 动画未恢复。基线按稀有度与元素覆盖选宠物，不能预测胜负。**目前没有完整离线战斗模拟器或经过胜负验证的 policy。** 下一步接通真实模拟器，纳入星级、技能、装备与位置效果。
+4. 图鉴式角色池、职业/元素筛选、原地图、敌人预览、拖放布阵与启发式 v1 已接入 Tkinter。schema v3 保存共享等级、按原图选择的星级和字母属性评级，不要求数值面板。星级/进化门槛取 UnitEvolutionTrial，试炼可造成高星保留较低形态；评级按各塔塔 UnitFeedLevel + PetFeedLevel 星级门槛 + PetFeedAttrRank 检查可达组合。旧异常星级标为未知并保留说明，旧数值归档。**目前没有完整离线战斗模拟器或经过胜负验证的 policy。** 下一步接通真实模拟器，不能把启发式候选当通关预测。
 5. 核对微信小游戏实际规则和热更新；APK 脚本一致性不能代替该验证。用户截图 11-26 的敌人等级 284 与 APK 对应 Stage 826 的 MonsterLevel[1]=284 相符，但单个匹配不足以证明全版本一致。工具方法及优先复用原游戏交互的原则见 `games/tata/mainline/README.md` 和 AGENTS.md。原有研究工具已提交 d969382。
+
+### 本轮源码复核与缓存资源补充
+
+- `verify_rules.py` 直接执行原始 BattleModule.InitFieldGridsArea/InitDeployGridsArea，对照全部 6,400 关的 Python 几何；同时加载原 PetStarPanel 对照 0–84 共 85 种图案。全部匹配，报告 `runtime/tata/research/rules-verification.json`。1-1 部署 1×5，1-10 为 3×5，11-26 为 5×5；GridY 空时原逻辑默认 1–5 列，而非数据缺失。
+- UnitEvolutionTrial 的 RequireStar 是当前形态进入下一阶段的门槛；含 QuestList 时仍需试炼。不同塔塔门槛不同，不能设置独立无约束的“形态+星级”或只凭星级自动决定形态。
+- PetFeedAttrRank 是 E/D/C/B/A/S/SS/SSS，PR 阈值依次为 0/5/10/25/40/50/55/60。各塔塔 UnitFeedLevel 的攻击/防御/生命路径不同，并受 PetFeedLevel.Star 限制。字母评级可能对应多个养成状态，未还原精确数值时保留候选集合。
+- 对塔塔小游戏的 Unity 资源缓存只读扫描 1,774 个 bundle，补出 41 张图，含第十一章原沙漠地图、全部 24 张星级图标、字母评级等，无解析错误；总本机 PNG 为 1,047。未读取账户存档、聊天或语音缓存。出处以 bundle 文件名和 SHA-256 记录于 `runtime/tata/mainline/art/cache-art-report.json`。
+- `inspect_catalog.py` 按恢复的 FlatBuffers 字段序解析 APK/微信资源目录，均定位到 27 个战斗背景引用及 bundle 依赖。资源目录和实际缓存覆盖范围不同，其余章节还需下载/同步；完整 CDN 资源下载路径未还原。面板已有“同步本机资源”按钮。
 
 ## 从真实数据到 policy 的验收路径
 

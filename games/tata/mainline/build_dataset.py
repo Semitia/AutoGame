@@ -3,6 +3,7 @@ import argparse
 from collections import Counter
 import json
 from pathlib import Path
+from rules import grid_areas
 
 
 def build(data: Path, out: Path):
@@ -10,6 +11,7 @@ def build(data: Path, out: Path):
         return json.loads((data / 'Config' / f'{name}.json').read_text(encoding='utf-8'))[name+'Table']
 
     stages, battles, units = table('Stage'), table('StageBattle'), table('Unit')
+    mode=table('BattleMode')['1']
     out.mkdir(parents=True, exist_ok=True)
     summaries, errors = [], []
     for key, stage in sorted(stages.items(), key=lambda x: int(x[0])):
@@ -29,14 +31,15 @@ def build(data: Path, out: Path):
                     if enemy not in units:
                         raise ValueError(f'Missing enemy unit {enemy}')
                     enemies[enemy] += wave['Num']
-            detail = dict(stage=stage, battle=battle, waves=waves,
+            detail = dict(stage=stage, battle=battle, waves=waves,battle_mode=mode,
                           enemy_units={k: units[k] for k in enemies},
                           source_paths=['Config/Stage.luae', 'Config/StageBattle.luae',
-                                        f'Config/StageBattle/{name}.luae', 'Config/Unit.luae'])
+                                        f'Config/StageBattle/{name}.luae', 'Config/Unit.luae','Config/BattleMode.luae'])
             (out / f'stage-{key}.json').write_text(json.dumps(detail, ensure_ascii=False, indent=2), encoding='utf-8')
+            areas=grid_areas(detail)
             summaries.append(dict(id=stage['ID'], name=stage['DisplayName'], battle_name=name,
-                                  deploy_limit=waves.get('CanDeployNum'), columns=waves.get('ColumnCount'),
-                                  grid_y=waves.get('GridY'), enemies=dict(enemies),
+                                  deploy_limit=waves.get('CanDeployNum'),grid_areas=areas,
+                                  column_count_metadata=waves.get('ColumnCount'),grid_y_x_bounds=waves.get('GridY'), enemies=dict(enemies),
                                   enemy_count=sum(enemies.values()),
                                   first_wave_frame=min(frames) if frames else None,
                                   last_wave_frame=max(frames) if frames else None))

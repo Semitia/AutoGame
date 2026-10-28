@@ -10,7 +10,7 @@ from pathlib import Path
 from lupa.lua54 import LuaRuntime
 
 
-def probe(source: Path):
+def runtime(source: Path):
     lua = LuaRuntime(register_eval=False, register_builtins=False, max_memory=256*1024*1024)
     setup = lua.eval('''function()
         local modules = {}
@@ -74,9 +74,14 @@ def probe(source: Path):
                 defaultTimeScale=module.timeScale, events=events,
                 sin90=env.ed.BattleMath.sin(90 * env.ed.BattleMath.DEG2RAD)}
         end
-        return {capture=capture, modules=modules, smoke=smoke}
+        return {capture=capture, modules=modules, smoke=smoke, init=init, env=env, bounded=bounded}
     end''')()
     setup.capture((source / 'Src/game_battle.luae').read_bytes())
+    return lua, setup
+
+
+def probe(source: Path):
+    lua, setup = runtime(source)
     smoke = setup.smoke()
     return dict(bundle='Src/game_battle.luae', modules=sorted(setup.modules.keys()),
                 battle_check_version=smoke.version, default_dt=smoke.dt,

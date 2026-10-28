@@ -1,8 +1,8 @@
 """Local catalog and versioned, manually entered player snapshots."""
 from datetime import datetime, timezone
 import json
-import math
 from pathlib import Path
+from rules import evolution_gate, feed_candidates
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNTIME = ROOT / 'runtime/tata/mainline'
@@ -36,6 +36,14 @@ class Catalog:
         self.elements = table('UnitElement')
         self.qualities = table('UnitQuality')
         self.battle_resources = table('StageBattleRes')
+        self.battle_mode = table('BattleMode')['1']
+        self.evolution_trials = table('UnitEvolutionTrial')
+        self.feed_levels = table('UnitFeedLevel')
+        self.feed_limits = table('PetFeedLevel')
+        self.feed_ranks = table('PetFeedAttrRank')
+        self.star_resources = table('UnitStarRes')
+        self.max_star = max(map(int,table('UnitStar')))
+        self.star_grade = table('Config')['StarGrade']['NumberValue']
         self.pets = {k: u for k, u in self.units.items() if u.get('UnitType') == 1 and u.get('Enable')}
         self.stages = read_json(self.dataset/'stages.json')
         self.stage_index = {str(s['id']): s for s in self.stages}
@@ -55,15 +63,19 @@ class Catalog:
         key = str(int(stage_id))
         if key not in self.stage_index:
             raise ValueError('关卡不存在')
-        return read_json(self.dataset/f'stage-{key}.json')
+        stage=read_json(self.dataset/f'stage-{key}.json')
+        stage['battle_mode']=self.battle_mode
+        return stage
 
 
 def validate_pet(pet, catalog):
     if 'level' in pet:
         raise ValueError('等级为账号共享字段，请修改共享等级')
+    if any(k in pet for k in ('atk','def','hp')):
+        raise ValueError('请录入字母评级，不再接受面板数值')
     result = {}
     for key, low, high, default in [('unit_id', 1, 999999, None),
-                                   ('evolution', 1, 100, 1), ('stars', 0, 100, 0), ('skill_level', 1, 100, 1)]:
+                                   ('evolution', 1, 100, 1), ('skill_level', 1, 100, 1)]:
         value = pet.get(key, default)
         try:
             integer = int(value)
@@ -79,15 +91,27 @@ def validate_pet(pet, catalog):
         raise ValueError('不是当前数据中可用的宠物编号')
     if str(result['evolution']) not in catalog.evolutions.get(key, {}):
         raise ValueError('此宠物不存在该进化阶段，请查看可用阶段')
-    for key in ('atk', 'def', 'hp'):
-        value = pet.get(key)
-        if value in ('', None):
-            result[key] = None
-        else:
-            value = float(value)
-            if not math.isfinite(value) or value < 0:
-                raise ValueError('面板属性必须为非负有限数值')
-            result[key] = value
+    star = pet.get('stars',0)
+    if star in ('',None): star=None
+    elif isinstance(star,bool) or str(star).strip()!=str(int(star)) or not 0<=int(star)<=catalog.max_star:
+        raise ValueError(f'请选择有效星级图案（0–{catalog.max_star}）')
+    else: star=int(star)
+    gate=evolution_gate(catalog,result['unit_id'],result['evolution'])
+    if star is not None and (star<gate['minimum'] or (not gate['can_wait_for_trial'] and star>gate['normal_max'])):
+        raise ValueError(f'星级与形态不符：本形态最低 {gate["minimum"]}，下次进化门槛 {gate["next_threshold"]}')
+    result['stars']=star
+    ratings=pet.get('attribute_ranks',{})
+    allowed={r['RankName'] for r in catalog.feed_ranks.values()}
+    if not isinstance(ratings,dict) or any(k not in ('ATK','DEF','HP') for k in ratings):
+        raise ValueError('属性评级字段无效')
+    result['attribute_ranks']={k:ratings.get(k) or None for k in ('ATK','DEF','HP')}
+    if any(v is not None and v not in allowed for v in result['attribute_ranks'].values()):
+        raise ValueError('请选择游戏中的 E/D/C/B/A/S/SS/SSS 评级')
+    if not feed_candidates(catalog,result['unit_id'],star,result['attribute_ranks']):
+        raise ValueError('评级组合不符合这只塔塔在当前星级下的养成配置；未知评级可留空')
+    # Preserve legacy numeric inputs as unverified notes, never convert them to ranks.
+    for legacy in ('legacy_stats','migration_notes'):
+        if legacy in pet: result[legacy]=pet[legacy]
     result['notes'] = str(pet.get('notes', ''))[:4000]
     return result
 
@@ -106,7 +130,7 @@ def snapshot(pets, catalog, notes='', shared_level=1):
     validated = [validate_pet(p, catalog) for p in pets]
     if len({p['unit_id'] for p in validated}) != len(validated):
         raise ValueError('角色池不能重复录入同一宠物')
-    return dict(schema_version=2, source='manual', updated_at=datetime.now(timezone.utc).isoformat(),
+    return dict(schema_version=3, source='manual', updated_at=datetime.now(timezone.utc).isoformat(),
                 data_version='apk-0.50.1', shared_level=shared_level_value(shared_level),
                 notes=str(notes), pets=validated)
 
@@ -119,7 +143,7 @@ class SharedLevelConflict(ValueError):
 
 def load_roster(path, catalog, shared_level_override=None):
     value = read_json(path)
-    if value.get('schema_version') not in (1, 2) or not isinstance(value.get('pets'), list):
+    if value.get('schema_version') not in (1, 2, 3) or not isinstance(value.get('pets'), list):
         raise ValueError('不支持的角色池文件格式')
     if value.get('data_version') != 'apk-0.50.1':
         raise ValueError('角色池数据版本不匹配，请先核对宠物数据')
@@ -132,6 +156,19 @@ def load_roster(path, catalog, shared_level_override=None):
         pets = [{k: v for k, v in p.items() if k != 'level'} for p in pets]
     else:
         level = value['shared_level']
+    if value['schema_version']<3:
+        migrated=[]
+        for pet in pets:
+            pet=dict(pet)
+            stats={k:pet.pop(k) for k in ('atk','def','hp') if k in pet}
+            if any(v is not None for v in stats.values()): pet['legacy_stats']=stats
+            gate=evolution_gate(catalog,pet['unit_id'],pet.get('evolution',1))
+            stars=pet.get('stars',0)
+            if stars is not None and (stars<gate['minimum'] or (not gate['can_wait_for_trial'] and stars>gate['normal_max'])):
+                pet['migration_notes']=f'旧版星级 {stars} 与形态不符，待按图案重新录入'
+                pet['stars']=None
+            migrated.append(pet)
+        pets=migrated
     return snapshot(pets, catalog, value.get('notes', ''), shared_level=level)
 
 

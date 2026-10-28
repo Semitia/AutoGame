@@ -6,24 +6,27 @@ import struct
 import UnityPy
 
 
+def wanted_art(data):
+    wanted = set()
+    def collect(value):
+        if isinstance(value, str) and value.lower().endswith(('.png', '.jpg')):
+            wanted.add(Path(value).stem)
+        elif isinstance(value, dict):
+            for item in value.values(): collect(item)
+        elif isinstance(value, list):
+            for item in value: collect(item)
+    for name in ('UnitRes','UnitCareer','UnitElement','UnitQuality','StageBattleRes',
+                 'UnitStarRes','PetFeedAttrRank','UnitAttr'):
+        collect(json.loads((data/'Config'/f'{name}.json').read_text(encoding='utf-8')))
+    return wanted
+
+
 def extract(path, out, data=None):
     UnityPy.config.FALLBACK_UNITY_VERSION = '2022.3.62f3'
     raw = path.read_bytes()
     out.mkdir(parents=True, exist_ok=True)
     position, count, exported, errors = 0, 0, set(), []
-    wanted = set()
-    if data:
-        def collect(value):
-            if isinstance(value, str) and value.lower().endswith(('.png', '.jpg')):
-                wanted.add(Path(value).stem)
-            elif isinstance(value, dict):
-                for item in value.values():
-                    collect(item)
-            elif isinstance(value, list):
-                for item in value:
-                    collect(item)
-        for name in ('UnitRes', 'UnitCareer', 'UnitElement', 'UnitQuality', 'StageBattleRes'):
-            collect(json.loads((data/'Config'/f'{name}.json').read_text(encoding='utf-8')))
+    wanted = wanted_art(data) if data else set()
     while position < len(raw):
         if raw[position:position+8] != b'UnityFS\0':
             raise ValueError(f'Invalid bundle boundary {position}')

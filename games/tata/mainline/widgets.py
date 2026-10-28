@@ -6,6 +6,7 @@ from PIL import Image, ImageTk, ImageOps
 
 from model import RUNTIME, ELEMENTS
 from policy import slots_for
+from rules import grid_areas, rectangle_slots, star_icons, evolution_gate
 
 BG = '#211e39'
 PANEL = '#302b4d'
@@ -52,6 +53,56 @@ class Art:
                 self.cache[key] = ImageTk.PhotoImage(image, master=self.root)
         return self.cache[key]
 
+    def dimensions(self,reference):
+        path=self.path(reference)
+        if path:
+            with Image.open(path) as raw:return raw.size
+        return 1334,1875
+
+
+def draw_stars(canvas, app, x, y, stars, width=120, size=20):
+    if stars is None:
+        canvas.create_text(x,y,text='星级待确认',fill=MUTED,font=('Microsoft YaHei UI',8)); return
+    ids=star_icons(stars,app.catalog.star_grade)
+    if not ids:
+        canvas.create_text(x,y,text='未升星',fill=MUTED,font=('Microsoft YaHei UI',8)); return
+    step=min(size,width/len(ids))
+    for i,icon_id in enumerate(ids):
+        image=app.art.image(app.catalog.star_resources[str(icon_id)]['IconName'],step,step)
+        if image: canvas.create_image(x+(i-(len(ids)-1)/2)*step,y,image=image)
+        else: canvas.create_text(x+(i-(len(ids)-1)/2)*step,y,text='?',fill=MUTED)
+
+
+class StarPicker(tk.Toplevel):
+    def __init__(self,app,uid,evolution,callback):
+        super().__init__(app.root)
+        self.title('按原游戏星级图案选择'); self.configure(bg=BG)
+        self.geometry('740x560'); self.transient(app.root)
+        self.grab_set()
+        gate=evolution_gate(app.catalog,uid,evolution)
+        tip=f'本形态最低星级编号 {gate["minimum"]}'
+        if gate['next_threshold'] is not None: tip+=f'；下次进化门槛 {gate["next_threshold"]}，还需考虑进化试炼'
+        ttk.Label(self,text=tip,wraplength=700).pack(pady=8)
+        def select(stars): callback(stars); self.destroy()
+        ttk.Button(self,text='还没确认，暂留空',command=lambda:select(None)).pack(pady=4)
+        current=app.current_star()
+        expanded=tk.BooleanVar(value=bool(gate['can_wait_for_trial'] and current is not None and current>gate['normal_max']))
+        scroll=ScrollArea(self); scroll.pack(fill='both',expand=True,padx=8,pady=8)
+        def draw():
+            for child in scroll.body.winfo_children():child.destroy()
+            maximum=app.catalog.max_star if expanded.get() else gate['normal_max']
+            for i,stars in enumerate(range(gate['minimum'],maximum+1)):
+                card=tk.Canvas(scroll.body,width=222,height=65,bg=PANEL,highlightthickness=1,highlightbackground='#685780',cursor='hand2')
+                card.grid(row=i//3,column=i%3,padx=4,pady=4)
+                draw_stars(card,app,110,23,stars,160,25)
+                card.create_text(110,51,text=f'图案 {stars}',fill=MUTED,font=('Microsoft YaHei UI',8))
+                card.bind('<Button-1>',lambda _,v=stars:select(v))
+                card.bind('<MouseWheel>',lambda e:scroll.canvas.yview_scroll(-int(e.delta/120),'units'))
+            scroll.canvas.yview_moveto(0)
+        if gate['can_wait_for_trial']:
+            ttk.Checkbutton(self,text='已达到门槛但试炼尚未完成：显示更高星级',variable=expanded,command=draw).pack(before=scroll)
+        draw()
+
 
 class Gallery(ttk.Frame):
     def __init__(self, parent, app, battle=False):
@@ -79,7 +130,7 @@ class Gallery(ttk.Frame):
         width = max(c.winfo_width(), 140)
         columns = max(1, width//134)
         card_width = min(150, (width-12)/columns-10)
-        card_height = card_width+70
+        card_height = card_width+92
         owned = {p['unit_id']: p for p in app.pets}
         for index, uid in enumerate(ids):
             x = 6+(index % columns)*(card_width+10)
@@ -109,7 +160,11 @@ class Gallery(ttk.Frame):
             c.create_rectangle(x+card_width-59, y+5, x+card_width-5, y+24, fill='#241f3c', outline='')
             c.create_text(x+card_width-9, y+14, text=f'Lv.{app.level.get()}', anchor='e', fill='white', font=('Microsoft YaHei UI', 8, 'bold'))
             c.create_text(x+card_width/2, y+card_width+16, text=app.catalog.name(uid, pet['evolution']), fill=TEXT, font=('Microsoft YaHei UI', 9, 'bold'), width=card_width-6)
-            label = f'★ {pet["stars"]}  ·  进化 {pet["evolution"]}' if uid in owned else '未拥有'
+            if uid in owned:
+                draw_stars(c,app,x+card_width/2,y+card_width+39,pet['stars'],card_width-8,20)
+                ranks=pet.get('attribute_ranks',{})
+                label=' · '.join(f'{n}{ranks.get(k) or "?"}' for k,n in [('ATK','攻'),('DEF','防'),('HP','生')])
+            else: label='未拥有'
             c.create_text(x+card_width/2, y+card_height-29, text=label, fill=MUTED, font=('Microsoft YaHei UI', 8))
             if self.battle:
                 deployed = uid in app.placements.values()
@@ -169,11 +224,12 @@ class BattleBoard(tk.Canvas):
         if app.stage_data is None:
             return
         width, height = max(self.winfo_width(), 200), max(self.winfo_height(), 300)
-        map_width = min(width, height*1334/1875)
-        left = (width-map_width)/2
-        height = map_width*1875/1334
         resource = app.catalog.battle_resources.get(str(app.stage_data['battle'].get('ResID')), {})
         reference = resource.get('BackgroundRes', '')
+        rw,rh=app.art.dimensions(reference)
+        map_width = min(width, height*rw/rh)
+        left = (width-map_width)/2
+        height = map_width*rh/rw
         background = app.art.image(reference, map_width, height, stretch=True)
         if background:
             self.create_image(width/2, height/2, image=background)
@@ -182,8 +238,10 @@ class BattleBoard(tk.Canvas):
             self.create_text(width/2, height*.35, text='本章地图贴图尚未下载\n保留实际格子与布阵约束', fill=MUTED, justify='center')
         self.create_rectangle(left+10, 8, left+map_width-10, 43, fill='#211e39', outline='#7a6a9b', width=2)
         self.create_text(width/2, 26, text=f'{app.stage_data["stage"]["DisplayName"]}   敌人等级 {app.stage_data["battle"]["MonsterLevel"].get("1", "?")}', fill=TEXT, font=('Microsoft YaHei UI', 11, 'bold'))
-        columns = app.stage_data['waves']['ColumnCount']
-        groups = {x: [] for x in range(1, columns+1)}
+        areas=grid_areas(app.stage_data)
+        field,deploy=areas['field'],areas['deploy']
+        columns = field['width']
+        groups = {x: [] for x in range(field['x'],field['x']+columns)}
         for event in app.stage_data['waves'].get('Frame', {}).values():
             for wave in event.get('Waves', {}).values():
                 enemy = str(wave['EnemyID'])
@@ -196,7 +254,7 @@ class BattleBoard(tk.Canvas):
         thumb = min(28, panel_width/columns-6)
         for column, enemies in groups.items():
             for i, enemy in enumerate(enemies[:3]):
-                x = panel_left+(column-.5)*panel_width/columns
+                x = panel_left+(column-field['x']+.5)*panel_width/columns
                 y = 82+i*29
                 icon = app.art.image(app.catalog.resource(enemy).get('IconName', ''), thumb, thumb)
                 if icon:
@@ -204,19 +262,23 @@ class BattleBoard(tk.Canvas):
                 else:
                     self.create_text(x, y, text=enemy, fill='#332c4d', font=('Microsoft YaHei UI', 7))
             if len(enemies) > 3:
-                self.create_text(panel_left+(column-.5)*panel_width/columns, 154,
+                self.create_text(panel_left+(column-field['x']+.5)*panel_width/columns, 154,
                                  text=f'+{len(enemies)-3}', fill='#332c4d', font=('Microsoft YaHei UI', 7))
         try:
             slots = slots_for(app.stage_data)
         except ValueError as exc:
             self.create_text(width/2, height*.6, text=str(exc), fill=TEXT, width=map_width-30); return
-        columns = app.stage_data['waves']['ColumnCount']
-        cell = map_width*.43/columns
+        cell = map_width*.43/5
         center_x = width/2
         baseline = height*.78
         # Presentation coordinates on the original texture; logical x/y remain unchanged.
+        for x,y in rectangle_slots(field):
+            cx=center_x+(x-3)*cell
+            cy=baseline-(y-1)*cell
+            if cy<175: continue  # enemy preview overlays the far end of the battlefield
+            self.create_rectangle(cx-cell*.48,cy-cell*.48,cx+cell*.48,cy+cell*.48,outline='#658054',dash=(2,5))
         for x, y in slots:
-            cx = center_x+(x-(columns+1)/2)*cell
+            cx = center_x+(x-3)*cell
             cy = baseline-(y-1)*cell
             r = (cx-cell*.48, cy-cell*.48, cx+cell*.48, cy+cell*.48)
             self.regions[(x, y)] = r
@@ -232,7 +294,7 @@ class BattleBoard(tk.Canvas):
             else:
                 self.create_text(cx, cy, text='+', fill='#e6f5c8', font=('Microsoft YaHei UI', 15))
         self.create_rectangle(left+8, height-44, left+map_width-8, height-8, fill='#211e39', outline='#6a6086')
-        self.create_text(width/2, height-26, text=f'上阵塔塔：{len(app.placements)} / {app.stage_data["waves"]["CanDeployNum"]}   ·   右键下阵', fill=TEXT)
+        self.create_text(width/2, height-26, text=f'{deploy["width"]}列 × {deploy["height"]}行 · 上阵 {len(app.placements)}/{app.stage_data["waves"]["CanDeployNum"]} · 右键下阵', fill=TEXT)
 
     def press(self, event):
         self.dragged = self.hit(event.x_root, event.y_root)

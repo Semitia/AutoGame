@@ -2,12 +2,14 @@
 import argparse
 from pathlib import Path
 import tkinter as tk
+import subprocess,sys,json
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from model import (Catalog, DATA, DATASET, RUNTIME, load_roster, snapshot, write_json,
                    validate_pet, filtered_pets, shared_level_value, SharedLevelConflict)
 from formation import move_unit
 from policy import recommend
-from widgets import Art, Gallery, BattleBoard, ScrollArea, BG, PANEL, TEXT, MUTED, ACCENT
+from rules import evolution_gate,feed_candidates
+from widgets import Art, Gallery, BattleBoard, ScrollArea, StarPicker, draw_stars, BG, PANEL, TEXT, MUTED, ACCENT
 
 
 class MainlinePanel:
@@ -36,6 +38,8 @@ class MainlinePanel:
         entry = ttk.Entry(header,textvariable=self.level,width=7); entry.pack(side='right')
         entry.bind('<Return>',lambda _:self.guard(self.save_level))
         ttk.Label(header,text='共享等级 Lv. ').pack(side='right')
+        self.sync_button=ttk.Button(header,text='同步本机资源',command=lambda:self.guard(self.sync_art))
+        self.sync_button.pack(side='right',padx=6)
         ttk.Label(root,textvariable=self.status,style='Hint.TLabel',wraplength=1100,padding=(18,9)).pack(side='bottom',fill='x')
         self.tabs = ttk.Notebook(root); self.tabs.pack(fill='both',expand=True,padx=12)
         roster, battle = ttk.Frame(self.tabs,padding=8),ttk.Frame(self.tabs,padding=8)
@@ -44,6 +48,7 @@ class MainlinePanel:
         content = ttk.Frame(roster); content.pack(fill='both',expand=True,pady=(8,0))
         self.gallery = Gallery(content,self); self.gallery.pack(side='left',fill='both',expand=True,padx=(0,12))
         editor_host = ttk.Frame(content,width=290); editor_host.pack(side='right',fill='y'); editor_host.pack_propagate(False)
+        self.editor_actions=ttk.Frame(editor_host,padding=(0,6));self.editor_actions.pack(side='bottom',fill='x')
         editor_scroll = ScrollArea(editor_host); editor_scroll.pack(fill='both',expand=True)
         self.editor = editor_scroll.body
         self.build_editor(); self.build_battle(battle)
@@ -61,6 +66,8 @@ class MainlinePanel:
         s.map('TButton',background=[('active','#5a4c78')])
         s.configure('Active.TButton',background='#486321',foreground='#efffc8')
         s.configure('TEntry',fieldbackground='#fcfbff',foreground='#201b35')
+        s.configure('TCombobox',fieldbackground='#fcfbff',foreground='#201b35')
+        s.map('TCombobox',fieldbackground=[('readonly','#fcfbff')],foreground=[('readonly','#201b35')])
         s.configure('TNotebook',background=BG,borderwidth=0)
         s.configure('TNotebook.Tab',background=PANEL,foreground=MUTED,padding=(16,8))
         s.map('TNotebook.Tab',background=[('selected','#554377')],foreground=[('selected','white')])
@@ -123,25 +130,77 @@ class MainlinePanel:
         self.pet_subtitle=tk.StringVar(value='所有塔塔使用顶部共享等级')
         ttk.Label(self.editor,textvariable=self.pet_subtitle,style='Hint.TLabel',wraplength=250).pack(pady=6)
         self.forms=ttk.Frame(self.editor); self.forms.pack(fill='x',pady=8)
-        self.fields={k:tk.StringVar(value=v) for k,v in [('evolution','1'),('stars','0'),('skill_level','1'),('atk',''),('def',''),('hp',''),('notes','')]}
+        self.fields={k:tk.StringVar(value=v) for k,v in [('evolution','1'),('stars','0'),('skill_level','1'),('notes','')]}
+        self.star_preview=tk.Canvas(self.editor,width=245,height=36,bg=BG,highlightthickness=0);self.star_preview.pack()
+        ttk.Button(self.editor,text='按星星 / 月亮图案选星级',command=self.pick_star).pack(fill='x',pady=4)
+        self.star_rule=tk.StringVar();ttk.Label(self.editor,textvariable=self.star_rule,style='Hint.TLabel',wraplength=245).pack()
         form=ttk.Frame(self.editor); form.pack(fill='x')
-        for i,(key,title) in enumerate([('stars','星级'),('skill_level','技能等级'),('atk','攻击（选填）'),('def','防御（选填）'),('hp','生命（选填）'),('notes','装备 / 备注')]):
+        self.rank_vars={};self.rank_boxes={};self.rank_icons={}
+        for i,(attr,title) in enumerate([('ATK','攻击评级'),('DEF','防御评级'),('HP','生命评级')]):
             ttk.Label(form,text=title).grid(row=i,column=0,sticky='w',pady=4)
-            ttk.Entry(form,textvariable=self.fields[key],width=16).grid(row=i,column=1,padx=(10,0),pady=4)
-        ttk.Button(self.editor,text='收入角色池 / 保存修改',command=lambda:self.guard(self.save_pet)).pack(fill='x',pady=(14,4))
-        ttk.Button(self.editor,text='从角色池移出',command=lambda:self.guard(lambda:self.toggle_owned(self.selected_id,True))).pack(fill='x')
-        ttk.Label(self.editor,text='点形态图片切换进化阶段。\n卡片底部可快速收入 / 移出。\n星级、技能与装备暂未参与评分。',style='Hint.TLabel',wraplength=245).pack(anchor='w',pady=10)
+            self.rank_vars[attr]=tk.StringVar(value='未知')
+            box=ttk.Combobox(form,textvariable=self.rank_vars[attr],width=8,state='readonly')
+            box.grid(row=i,column=1,padx=5);box.bind('<<ComboboxSelected>>',lambda _:self.update_growth())
+            self.rank_boxes[attr]=box
+            icon=ttk.Label(form);icon.grid(row=i,column=2);self.rank_icons[attr]=icon
+        self.growth_info=tk.StringVar();ttk.Label(self.editor,textvariable=self.growth_info,style='Hint.TLabel',wraplength=245).pack(pady=6)
+        for i,(key,title) in enumerate([('skill_level','技能等级'),('notes','装备 / 备注')],start=3):
+            ttk.Label(form,text=title).grid(row=i,column=0,sticky='w',pady=4)
+            ttk.Entry(form,textvariable=self.fields[key],width=13).grid(row=i,column=1,columnspan=2,padx=(5,0),pady=4)
+        ttk.Button(self.editor_actions,text='收入角色池 / 保存修改',command=lambda:self.guard(self.save_pet)).pack(fill='x',pady=(4,4))
+        ttk.Button(self.editor_actions,text='从角色池移出',command=lambda:self.guard(lambda:self.toggle_owned(self.selected_id,True))).pack(fill='x')
+        ttk.Label(self.editor,text='点形态图片切换阶段；星级按原图选择。\n字母评级只限定可能的养成状态，\n不会猜算成精确属性数值。',style='Hint.TLabel',wraplength=245).pack(anchor='w',pady=10)
 
     def select_pet(self,uid):
         self.selected_id=uid
         pet=next((p for p in self.pets if p['unit_id']==uid),dict(unit_id=uid,evolution=1,stars=0,skill_level=1))
         for key,value in self.fields.items(): value.set('' if pet.get(key) is None else str(pet[key]))
+        for key,value in self.rank_vars.items():value.set(pet.get('attribute_ranks',{}).get(key) or '未知')
         for child in self.forms.winfo_children(): child.destroy()
         for e in sorted(self.catalog.evolutions[str(uid)],key=int):
             icon=self.art.image(self.catalog.resource(uid,int(e)).get('IconName',''),42,42)
             ttk.Button(self.forms,text=e,width=4,image=icon or '',compound='top',command=lambda evo=e:self.set_evolution(evo)).pack(side='left',padx=2)
         self.update_portrait(); self.refresh_cards()
-    def set_evolution(self,evolution): self.fields['evolution'].set(str(evolution)); self.update_portrait()
+    def set_evolution(self,evolution):
+        self.fields['evolution'].set(str(evolution))
+        gate=evolution_gate(self.catalog,self.selected_id,int(evolution))
+        stars=self.current_star()
+        if stars is not None and (stars<gate['minimum'] or (not gate['can_wait_for_trial'] and stars>gate['normal_max'])):
+            self.fields['stars'].set('')
+            self.status.set('已切换形态，请按实际图案重新选择星级；未自动猜测星级')
+        self.update_portrait()
+
+    def current_star(self):
+        value=self.fields['stars'].get()
+        return int(value) if value else None
+
+    def pick_star(self):
+        if self.selected_id is not None:
+            StarPicker(self,self.selected_id,int(self.fields['evolution'].get()),self.set_star)
+
+    def set_star(self,stars):
+        self.fields['stars'].set('' if stars is None else str(stars));self.update_growth()
+
+    def update_growth(self):
+        if self.selected_id is None:return
+        stars=self.current_star()
+        self.star_preview.delete('all');draw_stars(self.star_preview,self,122,18,stars,210,29)
+        gate=evolution_gate(self.catalog,self.selected_id,int(self.fields['evolution'].get()))
+        text=f'本形态最低：{gate["minimum"]}；'
+        text+=f'下一进化门槛：{gate["next_threshold"]}' if gate['next_threshold'] is not None else '当前为最终形态'
+        if gate['can_wait_for_trial']:text+='（还需进化试炼）'
+        self.star_rule.set(text)
+        possible=feed_candidates(self.catalog,self.selected_id,stars)
+        ordered=sorted(self.catalog.feed_ranks.values(),key=lambda r:r['RankID'])
+        ratings={k:None if v.get()=='未知' else v.get() for k,v in self.rank_vars.items()}
+        for attr,box in self.rank_boxes.items():
+            values={row['ranks'][attr] for row in possible}
+            box['values']=['未知']+[r['RankName'] for r in ordered if r['RankName'] in values]
+            row=next((r for r in ordered if r['RankName']==ratings[attr]),{})
+            image=self.art.image(row.get('Icon',''),24,24)
+            self.rank_icons[attr].configure(image=image or '',text='' if image else '?')
+        matches=feed_candidates(self.catalog,self.selected_id,stars,ratings)
+        self.growth_info.set('符合游戏养成配置；未知评级可以保留为空。' if matches else '此评级组合与当前星级/塔塔不匹配，请核对原游戏。')
     def update_portrait(self):
         uid=self.selected_id
         if uid is None: return
@@ -151,6 +210,7 @@ class MainlinePanel:
         self.pet_title.set(self.catalog.name(uid,evolution))
         unit=self.catalog.pets[str(uid)]; career=self.catalog.careers.get(str(unit.get('UnitCareer')),{}).get('ShowName','')
         self.pet_subtitle.set(f'编号 {uid} · {career} · 形态 {evolution} · 共享 Lv.{self.level.get()}')
+        self.update_growth()
 
     def persist(self,pets=None):
         if self.read_error: raise ValueError('原角色池读取失败，已禁止覆盖；请修正原文件或导入有效角色池')
@@ -164,7 +224,10 @@ class MainlinePanel:
     def save_level(self): shared_level_value(self.level.get()); self.persist(); self.update_portrait()
     def save_pet(self):
         if self.selected_id is None: raise ValueError('请先点击一张塔塔卡片')
-        pet=validate_pet(dict(unit_id=self.selected_id,**{k:v.get() for k,v in self.fields.items()}),self.catalog)
+        base=next((dict(p) for p in self.pets if p['unit_id']==self.selected_id),{})
+        base.update(unit_id=self.selected_id,**{k:v.get() for k,v in self.fields.items()},
+                    attribute_ranks={k:None if v.get()=='未知' else v.get() for k,v in self.rank_vars.items()})
+        pet=validate_pet(base,self.catalog)
         self.persist([p for p in self.pets if p['unit_id']!=self.selected_id]+[pet])
     def toggle_owned(self,uid,remove_only=False):
         if uid is None: return
@@ -239,14 +302,37 @@ class MainlinePanel:
     def choose_candidate(self,index):
         if not 0<=index<len(self.candidates): return
         candidate=self.candidates[index]; self.placements={(p['x'],p['y']):p['unit_id'] for p in candidate['placements']}
-        self.plan_mode=candidate['mode']; self.reason.set('；'.join(candidate['limitations'])); self.refresh()
+        self.plan_mode=candidate['mode']
+        self.reason.set('候选偏好分不是胜率；位置尚未优化，可拖动调整。星级、属性评级与技能暂未参与评分。')
+        self.refresh()
     def save_plan(self):
         if not self.placements: raise ValueError('请先拖入塔塔或生成候选')
         path=filedialog.asksaveasfilename(title='保存布阵',defaultextension='.json',initialfile=f'plan-{self.stage_data["stage"]["ID"]}.json')
         if path:
-            write_json(path,dict(schema_version=2,simulated=False,stage_id=self.stage_data['stage']['ID'],data_version='apk-0.50.1',policy=self.plan_mode,
+            write_json(path,dict(schema_version=3,simulated=False,stage_id=self.stage_data['stage']['ID'],data_version='apk-0.50.1',policy=self.plan_mode,
                 roster=snapshot(self.pets,self.catalog,self.notes,shared_level=self.level.get()),placements=[dict(unit_id=v,x=k[0],y=k[1]) for k,v in self.placements.items()]))
             self.status.set('已保存布阵：'+path)
+
+    def sync_art(self):
+        from extract_cached_art import discover_tata_caches
+        caches=discover_tata_caches()
+        if not caches:raise ValueError('未找到这台电脑上的塔塔小游戏资源缓存')
+        RUNTIME.mkdir(parents=True,exist_ok=True)
+        self.art_log=(RUNTIME/'art-sync.log').open('w',encoding='utf-8')
+        args=[sys.executable,str(Path(__file__).with_name('extract_cached_art.py')),'--data',str(self.catalog.data),'--out',str(RUNTIME/'art')]
+        for path in caches:args+=['--cache-root',str(path)]
+        self.art_process=subprocess.Popen(args,stdout=self.art_log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        self.sync_button.configure(state='disabled');self.status.set('正在读取塔塔本机资源缓存，只提取图片…')
+        self.root.after(300,self.poll_art)
+
+    def poll_art(self):
+        if self.art_process.poll() is None:self.root.after(300,self.poll_art);return
+        self.art_log.close();self.sync_button.configure(state='normal');self.refresh()
+        if self.art_process.returncode==0:
+            report=json.loads((RUNTIME/'art/cache-art-report.json').read_text(encoding='utf-8'))
+            self.status.set(f'资源同步完成：补充 {len(report["added"])} 张图片；地图与图标已刷新。'
+                            +('部分文件未解析，见资源报告。' if report['errors'] else ''))
+        else:self.status.set('资源读取未完成，见 runtime/tata/mainline/art-sync.log')
 
 
 def main():

@@ -1,13 +1,9 @@
 """Explainable, bounded roster selection baseline. No battle simulation or position score."""
+from rules import grid_areas, rectangle_slots
 
 
 def slots_for(stage):
-    waves = stage['waves']
-    rows = sorted({int(y) for y in waves.get('GridY', {}).values()})
-    columns = int(waves.get('ColumnCount', 0))
-    if not rows or not 1 <= columns <= 20 or any(y < 1 or y > 20 for y in rows):
-        raise ValueError('关卡缺少可确认的布阵格子，暂不生成位置')
-    return [(x, y) for y in rows for x in range(1, columns+1)]
+    return rectangle_slots(grid_areas(stage)['deploy'])
 
 
 def recommend(catalog, stage, pets, top_k=3, beam_width=64):
@@ -68,6 +64,6 @@ def recommend(catalog, stage, pets, top_k=3, beam_width=64):
                             reasons={str(c['pet']['unit_id']): c['reason'] for c in chosen},
                             limitations=['共享等级仅记录；分数是稀有度和元素覆盖的偏好分，不是伤害或胜率',
                                          '格子按顺序放置，位置效果未优化',
-                                         '进化用于稀有度；星级、技能等级、装备与面板属性尚未进入评分',
+                                         '进化用于稀有度；星级、属性评级、技能和装备尚未进入评分',
                                          '每种宠物最多选择一只；未模拟战斗']))
     return results

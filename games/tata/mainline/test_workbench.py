@@ -13,11 +13,17 @@ def catalog():
                          CanDeployNum=1, CounterElement={'1': 3}, WeakElement={}) for i in (1, 2, 3)}
     result = SimpleNamespace(pets=units, evolutions={str(i): {'1': {'UnitQuality': i}} for i in (1, 2, 3)})
     result.quality = lambda p: result.evolutions[str(p['unit_id'])][str(p['evolution'])]['UnitQuality']
+    result.max_star=84;result.evolution_trials={}
+    result.feed_ranks={'1':dict(RankID=1,RankName='E',ATKPRMax=0,DEFPRMax=0,HPPRMax=0),
+                       '2':dict(RankID=2,RankName='D',ATKPRMax=5,DEFPRMax=5,HPPRMax=5)}
+    result.feed_levels={str(i):{'0':dict(ATKPR=0,DEFPR=0,HPPR=0),'1':dict(ATKPR=5,DEFPR=0,HPPR=0)} for i in (1,2,3)}
+    result.feed_limits={'1':dict(Star=0)}
     return result
 
 
 def stage():
-    return dict(waves=dict(GridY={'1': 2}, ColumnCount=3, CanDeployNum=2, CanUsePetIDs={},
+    return dict(battle_mode=dict(FieldGrids={'1':1,'2':1,'3':3,'4':12},DeployGrids={'1':1,'2':2,'3':3,'4':1}),
+                waves=dict(GridY={'1':1,'2':2,'3':3}, ColumnCount=3, CanDeployNum=2, CanUsePetIDs={},
                            Frame={'8': {'Waves': {'1': {'EnemyID': 1101, 'Num': 3}}}}),
                 enemy_units={'1101': {'UnitElement': 3}})
 
@@ -25,7 +31,7 @@ def stage():
 class WorkbenchTests(unittest.TestCase):
     def test_roster_roundtrip_and_validation(self):
         c = catalog()
-        value = snapshot([{'unit_id': 1, 'atk': '2.5', 'notes': '装备待确认'}], c, shared_level=234)
+        value = snapshot([{'unit_id': 1, 'attribute_ranks':{'ATK':'D'}, 'notes': '装备待确认'}], c, shared_level=234)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'roster.json'
             write_json(path, value)
@@ -34,7 +40,7 @@ class WorkbenchTests(unittest.TestCase):
             self.assertEqual(loaded['source'], 'manual')
             self.assertEqual(loaded['shared_level'], 234)
             self.assertNotIn('level', loaded['pets'][0])
-        for extra in [{'unit_id': 99}, {'level': '1.5'}, {'evolution': 9}, {'atk': 'nan'}, {'level': None}]:
+        for extra in [{'unit_id': 99}, {'level': '1.5'}, {'evolution': 9}, {'attribute_ranks':{'HP':'Z'}}, {'level': None}]:
             with self.subTest(extra=extra), self.assertRaises(ValueError):
                 validate_pet(dict({'unit_id': 1}, **extra), c)
         with self.assertRaises(ValueError):
@@ -47,7 +53,7 @@ class WorkbenchTests(unittest.TestCase):
             old = dict(schema_version=1, data_version='apk-0.50.1', pets=[dict(unit_id=i, level=234) for i in (1,2)])
             write_json(path, old)
             value = load_roster(path, c)
-            self.assertEqual(value['schema_version'], 2)
+            self.assertEqual(value['schema_version'], 3)
             self.assertEqual(value['shared_level'], 234)
             self.assertTrue(all('level' not in p for p in value['pets']))
             old['pets'][1]['level'] = 1
@@ -87,13 +93,20 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(recommend(c, s, pets)[0]['placements'][0]['unit_id'], 1)
         self.assertEqual(len(recommend(c, s, pets)[0]['placements']), 1)
 
-    def test_unknown_grids_and_empty_rosters_rejected(self):
+    def test_empty_grid_uses_source_default_and_empty_rosters_rejected(self):
         c, s = catalog(), stage()
         with self.assertRaises(ValueError):
             recommend(c, s, [])
         s['waves']['GridY'] = {}
-        with self.assertRaises(ValueError):
-            recommend(c, s, snapshot([{'unit_id': 1}], c)['pets'])
+        self.assertEqual(len(slots_for(s)),5)
+        del s['battle_mode']
+        with self.assertRaises(KeyError):slots_for(s)
+
+    def test_letter_ranks_are_not_numeric_stats(self):
+        c=catalog()
+        with self.assertRaisesRegex(ValueError,'评级组合'):
+            validate_pet(dict(unit_id=1,attribute_ranks={'DEF':'D'}),c)
+        self.assertEqual(validate_pet(dict(unit_id=1,attribute_ranks={'ATK':'D'}),c)['attribute_ranks']['ATK'],'D')
 
 
 if __name__ == '__main__':
