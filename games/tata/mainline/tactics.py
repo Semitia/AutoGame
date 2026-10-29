@@ -170,6 +170,25 @@ class Tactics:
             results.append((self.repair(plan),'community:'+reference['id'],None))
         return results
 
+    def single_replacements(self,base):
+        """Every owned legal alternative, with no career/rarity cutoff."""
+        used={p['unit_id'] for p in base}
+        for index in range(len(base)):
+            for uid in sorted(set(self.ids)-used):
+                plan=[dict(p) for p in base];plan[index]['unit_id']=uid
+                yield plan
+
+    def player_seeds(self,base):
+        """Scoped player hypotheses are tried early, never treated as victories."""
+        data=json.loads(Path(__file__).with_name('player_hypotheses.json').read_text(encoding='utf-8'))
+        used={p['unit_id'] for p in base}
+        for hint in data['hypotheses']:
+            if self.stage['stage']['DisplayName'] not in hint['stage_names']:continue
+            before,after=hint['replace_from'],hint['replace_to']
+            if before not in used or after in used or after not in self.ids:continue
+            plan=[dict(p,unit_id=after if p['unit_id']==before else p['unit_id']) for p in base]
+            yield plan,'player-hypothesis:'+hint['id'],None
+
     def mutate(self,base,rng):
         plan=[dict(p) for p in base];action=rng.randrange(5);n=len(plan)
         if action==0 and len(self.ids)>n:

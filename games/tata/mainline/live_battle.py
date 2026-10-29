@@ -50,6 +50,30 @@ def lua_pairs(heap,ref):
     return sorted((k,v) for k,v in table.items() if array(k))+[(k,v) for k,v in table.items() if not array(k)]
 
 
+def open_view(table):
+    # BaseView.Close sets these flags before the outgoing animation; isShow can
+    # remain false on an active prepare view, so it is not a liveness test.
+    return not any(table.get(k) is True for k in ('_behavior_destructed','isBaseViewClose','_duringOut'))
+
+
+def current_prepare(heap,candidates,controller_ref,controller,stage,unit_refs=None):
+    matched=[]
+    for view in candidates:
+        if view.get('stageID')!=stage or not open_view(view):continue
+        if view.get('battleController')!=controller_ref:continue
+        if isinstance(controller.get('battleScene'),TableRef) and view.get('battleScene')!=controller['battleScene']:continue
+        if unit_refs is not None:
+            selected=view.get('selectedUnitDict')
+            if not isinstance(selected,TableRef):continue
+            try:refs={ref for ref in heap.table(selected).values() if isinstance(ref,TableRef)}
+            except (LiveReadError,UnicodeError,struct.error):continue
+            if refs!=unit_refs:continue
+        matched.append(view)
+    if len(matched)>1:
+        raise LiveReadError(f'仍有 {len(matched)} 个有效布阵界面关联当前战斗，无法安全选择；请重新打开主线布阵页后再启动')
+    return matched[0] if matched else None
+
+
 class LiveBattle:
     def __init__(self):
         self.reader=None
@@ -70,25 +94,33 @@ class LiveBattle:
     def close(self):
         if self.reader:self.reader.close();self.reader=None
 
-    def tables(self,name):
+    def instances(self,name):
         results=[]
-        for ref in self.refs.get(name,[]):
-            table=self.heap.table(ref)
-            if self.heap.table(table.get('class')).get('__cname')!=name:raise LiveReadError('主线对象已失效，请重新定位')
-            results.append(table)
+        invalid=False
+        for ref in dict.fromkeys(self.refs.get(name,[])):
+            try:
+                table=self.heap.table(ref)
+                if self.heap.table(table.get('class')).get('__cname')!=name:raise LiveReadError('主线对象已失效，请重新定位')
+            except (LiveReadError,UnicodeError,struct.error):
+                invalid=True;continue
+            if table.get('_behavior_destructed') is not True:results.append((ref,table))
+        if invalid and not results:raise LiveReadError('主线对象已失效，请重新定位')
         return results
+
+    def tables(self,name):return [t for _,t in self.instances(name)]
 
     def snapshot(self,debug=False):
         result=dict(captured_at=datetime.now(timezone.utc).isoformat())
         stages=self.tables('ed.StageModel')
         if len(stages)!=1:raise LiveReadError('主线进度模型不唯一')
         result['current_stage_id']=stages[0].get('_stageID')
-        all_controllers=self.tables('ed.StageBattleController')
-        controllers=[c for c in all_controllers if c.get('stageID')==result['current_stage_id'] and c.get('inBattle') is True]
+        all_controllers=self.instances('ed.StageBattleController')
+        controllers=[(ref,c) for ref,c in all_controllers if c.get('stageID')==result['current_stage_id'] and c.get('inBattle') is True]
         if all_controllers and not controllers:raise LiveReadError('关卡控制器已切换，需要重新定位')
         if len(controllers)>1:raise LiveReadError('当前关卡战斗控制器不唯一')
+        controller_ref=None;c={};unit_refs=None
         if controllers:
-            c=controllers[0]
+            controller_ref,c=controllers[0]
             result['controller']={k:c[k] for k in ('stageID','battleID','battleMode','inBattle','inBattleScene','isAutoBattle','timeScale','defeatFlag') if type(c.get(k)) in (int,bool,float,str)}
             if debug:result['controller_keys']=list(c)
             if isinstance(c.get('params'),TableRef):
@@ -102,13 +134,14 @@ class LiveBattle:
                 units=self.heap.table(c['battleUnitSystem'])
                 if debug:result['unit_system_keys']=list(units)
                 if isinstance(units.get('unitList'),TableRef):
-                    entries=self.heap.table(units['unitList']);parsed=[]
+                    entries=self.heap.table(units['unitList']);parsed=[];unit_refs=set()
                     for _,ref in entries.items():
                         if not isinstance(ref,TableRef):continue
                         u=self.heap.table(ref)
                         if u.get('camp')!=1 or not isinstance(u.get('petData'),TableRef):continue
                         pd=self.heap.table(u['petData']);uid=pd.get('tid')
                         if type(uid) is not int or not 1<=uid<100:continue
+                        unit_refs.add(ref)
                         transform=self.heap.table(u['transformComponent'])
                         parsed.append(dict(unit_id=uid,**{k:transform[k] for k in ('_gridX','_gridY','_positionX','_positionY') if type(transform.get(k)) in (int,float)}))
                         if debug and not result.get('transform_keys'):result['transform_keys']=list(transform)
@@ -132,19 +165,21 @@ class LiveBattle:
                                     'tid','level','progress','evoTID','starLv','feed','badgeProps') if k in pet},
                                     config=plain(self.heap,h.get('config'),3)))
                         result['battle_input_details']['self_heroes']=heroes
-        victories=[v for v in self.tables('ed.StageBattleVictoryView') if v.get('isShow') is True]
+        victories=[v for v in self.tables('ed.StageBattleVictoryView') if v.get('isShow') is True and open_view(v) and v.get('battleController')==controller_ref]
         if len(victories)>1:raise LiveReadError('胜利结算界面不唯一')
         if victories:
             result['victory']={k:victories[0][k] for k in ('isShow','animFinished','animStarted','autoRecvShowDuration','exitType') if type(victories[0].get(k)) in (int,float,bool,str)}
-        prepares=[p for p in self.tables('ed.StageBattlePrepareView') if p.get('stageID')==result['current_stage_id']]
-        if len(prepares)>1:raise LiveReadError('当前关卡布阵对象不唯一')
-        if prepares:
-            p=prepares[0]
+        p=current_prepare(self.heap,self.tables('ed.StageBattlePrepareView'),controller_ref,c,result['current_stage_id'],
+            unit_refs if result.get('battle',{}).get('state')==1 else None) if controller_ref else None
+        if controller_ref and result.get('battle',{}).get('state')==1 and p is None:
+            raise LiveReadError('未找到与当前战斗一致的有效布阵界面；请返回主线布阵页后重新启动')
+        if p:
             result['prepare']={k:p[k] for k in ('isShow','stageID','_isStarted','isPlayingAutoIn','_currentPrepareListRowCount') if type(p.get(k)) in (int,bool)}
             result['touch']={k:plain(self.heap,p[k],1) for k in ('touchBeganPosition','touchMovedPosition','touchEndedPosition','currentSelectedGrid','mouseDown') if k in p}
             if isinstance(p.get('selectedUnitDict'),TableRef):
                 selected=[]
                 for uid,ref in self.heap.table(p['selectedUnitDict']).items():
+                    if not isinstance(ref,TableRef):continue
                     unit=self.heap.table(ref);t=self.heap.table(unit['transformComponent'])
                     selected.append(dict(unit_id=uid,**{k:t[k] for k in ('_gridX','_gridY','_positionX','_positionY') if k in t}))
                 result['selected']=selected

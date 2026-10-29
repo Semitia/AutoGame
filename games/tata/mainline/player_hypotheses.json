@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "hypotheses": [
+    {
+      "id": "11-30-fire-lizard-to-electric-deer",
+      "source": "user_hypothesis",
+      "recorded_at": "2026-10-29",
+      "stage_names": ["11-30"],
+      "replace_from": 17,
+      "replace_to": 20,
+      "status": "unverified",
+      "note": "玩家经验建议：当前阵容的火蜥换成电鹿可能更好。仅作为优先比较候选，按当前养成和初始化顺序重新模拟，不预设结论。"
+    }
+  ]
+}

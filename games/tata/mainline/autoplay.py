@@ -16,6 +16,10 @@ GEOMETRY=RUNTIME/'autoplay-geometry.json'
 class WaitTimeout(RuntimeError):pass
 
 
+class RunStopped(RuntimeError):
+    def __init__(self,code,message):super().__init__(message);self.code=code
+
+
 def canonical(rows):
     return sorted((p['unit_id'],p.get('x',p.get('_gridX')),p.get('y',p.get('_gridY'))) for p in rows)
 
@@ -25,9 +29,11 @@ def placements(state):
 
 
 def verified(report):
+    if report.get('status') in ('cancelled','no_solution','error'):return False
     finalists=report.get('finalists',[])
     validation=finalists[0].get('validation',[]) if finalists else []
-    return report.get('evaluation',{}).get('won') is True and len(validation)>=3 and all(v.get('won') is True for v in validation)
+    return (report.get('evaluation',{}).get('won') is True and len(validation)>=3
+        and finalists[0].get('validation_complete',True) and all(v.get('won') is True for v in validation))
 
 
 def card_point(index,g,total=None,tail=False):
@@ -62,10 +68,11 @@ def is_preparing(state,stage=None):
 
 
 class Runner:
-    def __init__(self,geometry,budget=40,max_stages=5,run_dir=None,stop_path=STOP):
+    def __init__(self,geometry,budget=40,max_stages=5,run_dir=None,stop_path=STOP,max_search_seconds=600,stop_when_verified=True):
         from desktop_input import GameInput
         from live_battle import LiveBattle
         self.g=geometry;self.budget=budget;self.max_stages=max_stages;self.stop_path=Path(stop_path)
+        self.max_search_seconds=max_search_seconds;self.stop_when_verified=stop_when_verified
         self.folder=Path(run_dir or RUNTIME/'autoplay-runs'/uuid.uuid4().hex);self.folder.mkdir(parents=True,exist_ok=True)
         self.catalog=Catalog();self.input=GameInput(geometry['width'],geometry['height'])
         if geometry.get('physical_size') and tuple(geometry['physical_size'])!=self.input.initial_dimensions:
@@ -73,14 +80,27 @@ class Runner:
         self.live=LiveBattle();self.input.focus();self.completed=[];self.events=[]
 
     def event(self,kind,**data):
-        row=dict(time=datetime.now(timezone.utc).isoformat(),event=kind,**data);self.events.append(row)
+        row=dict(time=datetime.now(timezone.utc).isoformat(),event=kind,**data)
+        value=dict(**row,run_dir=str(self.folder),completed=self.completed)
+        write_json(self.folder/'status.json',value);write_json(RUNTIME/'autoplay-status.json',value)
+        if kind=='searching' and data.get('search',{}).get('status')=='searching':
+            now=time.monotonic()
+            if now-getattr(self,'_search_log_time',float('-inf'))<10:return
+            self._search_log_time=now
+        self.events.append(row);self.events=self.events[-256:]
         write_json(self.folder/'events.json',self.events)
-        write_json(RUNTIME/'autoplay-status.json',dict(**row,run_dir=str(self.folder),completed=self.completed))
+        with (self.folder/'events.jsonl').open('a',encoding='utf-8') as stream:
+            stream.write(json.dumps(row,ensure_ascii=False)+'\n')
         print(json.dumps(row,ensure_ascii=False),flush=True)
 
     def check_stop(self):
         if self.stop_path.exists():raise RuntimeError('用户停止自动推关')
         self.input.stop_check()
+
+    def compute_stopped(self):
+        # Simulation does not use the mouse; a long offline search can run while
+        # the user works elsewhere. Foreground is checked again before input.
+        return self.stop_path.exists() or self.input.window.emergency_stop()
 
     def snapshot(self):
         self.check_stop()
@@ -170,21 +190,25 @@ class Runner:
             outcomes=[]
             if current:
                 for seed in (123456,701,2029,8191):
-                    self.check_stop();outcomes.append(sim.evaluate(stage,current,seed))
-            if outcomes and all(o['won'] for o in outcomes):
+                    if self.compute_stopped():raise RunStopped('user_stop','用户停止搜索，尚未进行布阵')
+                    outcomes.append(sim.evaluate(stage,current,seed))
+            if outcomes and all(o['won'] for o in outcomes) and self.stop_when_verified:
                 t=Tactics(sim,stage);ctx=context_for(sim,stage,t);features=t.features(current)
                 for outcome in outcomes:memory.record(sim.engine_fingerprint,ctx,current,features,outcome)
                 report=dict(stage_id=stage_id,stage_name=stage['stage']['DisplayName'],placements=current,
                     evaluation=outcomes[0],finalists=[dict(validation=outcomes[1:])],context=ctx,context_hash=stable_hash(ctx),
                     engine_fingerprint=sim.engine_fingerprint,simulated=True,calibrated=False,mode='validated-current-formation')
             else:
-                def progress(n,total,best):
-                    self.check_stop()
-                    if n==1 or n%5==0:self.event('searching',stage_id=stage_id,evaluated=n,budget=total,won=best['evaluation']['won'])
-                report=search(sim,stage,budget=self.budget,experience=memory,initial_plan=current or None,progress=progress)
+                def status(value):self.event('searching',stage_id=stage_id,search=value)
+                report=search(sim,stage,budget=self.budget,experience=memory,initial_plan=current or None,status=status,
+                    max_seconds=self.max_search_seconds,stop_path=self.stop_path,check_stop=self.compute_stopped,
+                    stop_when_verified=self.stop_when_verified,robust_orders=True,checkpoint=self.folder/f'search-{stage_id}.checkpoint.json')
         finally:memory.close()
         write_json(self.folder/f'plan-{stage_id}.json',report)
-        if not verified(report):raise RuntimeError('当前预算内没有通过全部复核的方案；保留原阵容')
+        if not verified(report):
+            from job_status import search_summary
+            code='user_stop' if report.get('status')=='cancelled' else 'search_not_found'
+            raise RunStopped(code,search_summary(report)+'；已保存最佳候选，尚未进行布阵')
         return report
 
     def verify_request_order(self,stage,state,report):
@@ -201,10 +225,17 @@ class Runner:
             features=Tactics(self.sim,self.catalog.stage(stage)).features(order)
             for outcome in outcomes:memory.record(report['engine_fingerprint'],report['context'],order,features,outcome)
         finally:memory.close()
-        if not all(o['won'] for o in outcomes):raise RuntimeError('按原游戏实际入场顺序复核未通过，保留布阵并停止开战')
+        if not all(o['won'] for o in outcomes):raise RunStopped('request_order_failed',f'按原游戏实际入场顺序复核未通过（{sum(o["won"] for o in outcomes)}/4）；已保存结果、保留布阵，未点击开战')
         report['placements']=order;report['actual_order_validation']=outcomes
         write_json(self.folder/f'plan-{stage}.json',report)
         self.event('request_order_verified',stage_id=stage)
+
+    def verify_roster(self):
+        from live_roster import read_live
+        from experience import stable_hash
+        current=read_live();before=self.sim.capture
+        def key(capture):return stable_hash(dict(level=capture['shared_level'],pets=sorted(capture['pets'],key=lambda p:p['tid'])))
+        if key(current)!=key(before):raise RunStopped('roster_changed','搜索期间角色池或养成已改变；方案和进度已保存，请重新同步后搜索，尚未进行布阵')
 
     def continue_victory(self,state):
         battle=state.get('battle',{});finished=battle.get('battleID');next_stage=state.get('current_stage_id')
@@ -231,7 +262,7 @@ class Runner:
         if state.get('battle',{}).get('state')==4:self.continue_victory(state)
         for _ in range(self.max_stages):
             state=self.wait(is_preparing)
-            stage=state['current_stage_id'];report=self.plan(state);self.deploy(report)
+            stage=state['current_stage_id'];report=self.plan(state);self.verify_roster();self.deploy(report)
             state=self.preparing(stage)
             if canonical(state['selected'])!=canonical(report['placements']):raise RuntimeError('开战前整队核验失败')
             self.verify_request_order(stage,state,report)
@@ -246,7 +277,7 @@ class Runner:
             try:memory.record_feedback(report['engine_fingerprint'],report['context_hash'],report['placements'],won,
                 note=f'原进程只读结算，证据 {self.folder.name}/live-result-{stage}.json',source='live_observation')
             finally:memory.close()
-            if not won:raise RuntimeError('实战未通过，已记录与模拟的差异，停止连续挑战')
+            if not won:raise RunStopped('battle_lost','实战未通过，已记录与模拟的差异，停止连续挑战')
             expected_next=next_stage_id(self.catalog,stage)
             self.wait(lambda s:s.get('current_stage_id')==expected_next,15)
             advanced=self.continue_victory(self.snapshot())
@@ -257,24 +288,37 @@ class Runner:
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--geometry',type=Path,default=GEOMETRY)
     p.add_argument('--stages',type=int,default=5);p.add_argument('--budget',type=int,default=40)
+    p.add_argument('--seconds',type=float,default=600,help='每关搜索秒数上限，0不限')
+    p.add_argument('--optimize-until-limit',action='store_true',help='找到通过方案后仍继续优化到上限')
     p.add_argument('--run-dir',type=Path);a=p.parse_args()
-    if not 1<=a.stages<=100 or not 4<=a.budget<=10000:p.error('关卡数1–100，预算4–10000')
+    if not 1<=a.stages<=100 or a.budget<0 or not math.isfinite(a.seconds) or a.seconds<0:p.error('关卡数1–100；候选/时长上限非负，0不限')
     import msvcrt
     RUNTIME.mkdir(parents=True,exist_ok=True)
-    with (RUNTIME/'autoplay.lock').open('a+b') as lock:
+    folder=a.run_dir or RUNTIME/'autoplay-runs'/uuid.uuid4().hex;folder.mkdir(parents=True,exist_ok=True)
+    def startup_event(event,**data):
+        value=dict(time=datetime.now(timezone.utc).isoformat(),event=event,run_dir=str(folder),completed=[],**data)
+        write_json(folder/'status.json',value);write_json(RUNTIME/'autoplay-status.json',value)
+    startup_event('initializing')
+    lock=None;locked=False;runner=None
+    try:
+        lock=(RUNTIME/'autoplay.lock').open('a+b')
         if not lock.tell():lock.write(b'0');lock.flush()
         lock.seek(0)
         try:msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
         except OSError:raise RuntimeError('已有自动推关进程控制该游戏')
-        runner=None
-        try:
-            runner=Runner(read_json(a.geometry),a.budget,a.stages,run_dir=a.run_dir);runner.run()
-        except Exception as exc:
-            if runner:runner.event('stopped',reason=str(exc))
-            raise
-        finally:
-            if runner:runner.live.close()
-            lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_UNLCK,1)
+        locked=True
+        runner=Runner(read_json(a.geometry),a.budget,a.stages,run_dir=folder,
+            max_search_seconds=a.seconds,stop_when_verified=not a.optimize_until_limit);runner.run()
+    except Exception as exc:
+        from job_status import error_code
+        data=dict(reason=str(exc),reason_code=getattr(exc,'code',None) or error_code(exc))
+        if runner:runner.event('stopped',**data)
+        else:startup_event('stopped',**data)
+        raise
+    finally:
+        if runner:runner.live.close()
+        if locked:lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_UNLCK,1)
+        if lock:lock.close()
 
 
 if __name__=='__main__':main()

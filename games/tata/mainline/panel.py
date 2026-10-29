@@ -20,7 +20,17 @@ class MainlinePanel:
         self.selected_id, self.stage_data, self.ghost, self.drag_id = None, None, None, None
         self.plan_mode, self.notes, self.read_error = 'manual', '', False
         self.initial_stage=initial_stage;self.replay_frame=None;self.replay_index=0;self.replay_playing=False
-        self.current_report=None;self.show_grid=tk.BooleanVar(value=False);self.search_budget=tk.StringVar(value='120')
+        self.current_report=None;self.show_grid=tk.BooleanVar(value=False);self.search_budget=tk.StringVar(value='0')
+        self.search_minutes=tk.StringVar(value='10');self.stop_on_success=tk.BooleanVar(value=True)
+        try:
+            from job_status import search_limits
+            settings=json.loads((RUNTIME/'search-options.json').read_text(encoding='utf-8'))
+            search_limits(settings['candidates'],settings['minutes'])
+            self.search_budget.set(str(settings['candidates']));self.search_minutes.set(str(settings['minutes']))
+            self.stop_on_success.set(bool(settings['stop_on_success']))
+        except (OSError,ValueError,KeyError,TypeError):pass
+        self.run_status=tk.StringVar(value='尚未启动。可只做本地搜索；时长/候选上限填0表示不限。')
+        self.last_job_status={};self.last_job_dir=None
         root.title('Tata · 图鉴与地图布阵'); root.configure(bg=BG)
         root.protocol('WM_DELETE_WINDOW',self.close)
         width, height = min(1280,root.winfo_screenwidth()-70), min(820,root.winfo_screenheight()-100)
@@ -271,10 +281,18 @@ class MainlinePanel:
         self.sim_button.pack(side='left',padx=(0,6))
         self.search_button=ttk.Button(actions,text='经验搜索阵容',command=lambda:self.guard(lambda:self.run_local(True)))
         self.search_button.pack(side='left',padx=(0,6))
-        ttk.Label(actions,text='预算').pack(side='left');ttk.Entry(actions,textvariable=self.search_budget,width=5).pack(side='left',padx=(4,10))
+        self.stop_search_button=ttk.Button(actions,text='停止搜索并保存',command=self.stop_search)
+        self.stop_search_button.pack(side='left',padx=(0,6))
         ttk.Button(actions,text='打开模拟方案',command=lambda:self.guard(self.open_simulation)).pack(side='left',padx=5)
         ttk.Button(actions,text='播放 / 暂停回放',command=lambda:self.guard(self.toggle_replay)).pack(side='left',padx=5)
         ttk.Checkbutton(actions,text='显示布阵格',variable=self.show_grid,command=lambda:self.board.draw()).pack(side='left',padx=8)
+        limits=ttk.Frame(parent);limits.pack(fill='x',pady=(0,6))
+        ttk.Label(limits,text='候选上限').pack(side='left');ttk.Entry(limits,textvariable=self.search_budget,width=7).pack(side='left',padx=(4,10))
+        ttk.Label(limits,text='每关时长（分钟）').pack(side='left')
+        ttk.Combobox(limits,textvariable=self.search_minutes,values=('10','60','480','720','0'),width=7).pack(side='left',padx=(4,8))
+        ttk.Label(limits,text='0 = 不限',style='Hint.TLabel').pack(side='left',padx=(0,12))
+        ttk.Checkbutton(limits,text='复核通过即结束',variable=self.stop_on_success).pack(side='left')
+        ttk.Button(limits,text='继续已保存搜索',command=lambda:self.guard(self.resume_search)).pack(side='right')
         learning=ttk.Frame(parent);learning.pack(fill='x',pady=(0,6))
         self.learning_status=tk.StringVar(value='搜索自动复用本机经验；玩家攻略是弱先验，按当前角色池重新模拟。')
         ttk.Label(learning,textvariable=self.learning_status,style='Hint.TLabel').pack(side='left')
@@ -287,6 +305,11 @@ class MainlinePanel:
         ttk.Spinbox(auto,from_=1,to=100,textvariable=self.autoplay_count,width=4).pack(side='left')
         ttk.Label(auto,text='关；保持游戏前台，F8 随时停止',style='Hint.TLabel').pack(side='left',padx=6)
         ttk.Button(auto,text='停止自动推关',command=self.stop_autoplay).pack(side='right')
+        run=ttk.Frame(parent);run.pack(fill='x',pady=(0,6))
+        self.run_status_label=ttk.Label(run,textvariable=self.run_status,wraplength=980,style='Hint.TLabel')
+        self.run_status_label.pack(side='left',fill='x',expand=True)
+        ttk.Button(run,text='运行详情',command=self.show_run_details).pack(side='right')
+        self.run_progress=ttk.Progressbar(parent,mode='determinate',maximum=100);self.run_progress.pack(fill='x',pady=(0,6))
         content=ttk.Frame(parent); content.pack(fill='both',expand=True)
         left=ttk.Frame(content); left.pack(side='left',fill='both',expand=True,padx=(0,10)); self.filters(left)
         ttk.Label(left,text='拖卡片上阵 · 地图内拖动交换位置 · 拖回卡片区下阵',foreground=ACCENT).pack(anchor='w',pady=8)
@@ -352,12 +375,11 @@ class MainlinePanel:
                 roster=snapshot(self.pets,self.catalog,self.notes,shared_level=self.level.get()),placements=[dict(unit_id=v,x=k[0],y=k[1]) for k,v in self.placements.items()]))
             self.status.set('已保存布阵：'+path)
 
-    def run_local(self,search):
+    def run_local(self,search,resume=None):
         if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:raise ValueError('请先停止自动推关')
         if getattr(self,'combat_process',None) is not None and self.combat_process.poll() is None:return
         if not search and not self.placements:raise ValueError('请先摆放阵容')
-        budget=int(self.search_budget.get())
-        if not 4<=budget<=10000:raise ValueError('搜索预算应为 4–10000 个候选')
+        budget,seconds=self.configured_limits()
         rows=[];stamps=set()
         for pet in self.pets:
             observed=pet.get('game_observed',{})
@@ -372,41 +394,97 @@ class MainlinePanel:
         job=RUNTIME/'simulations'/uuid.uuid4().hex;job.mkdir(parents=True,exist_ok=True)
         write_json(job/'capture.json',capture)
         self.combat_output=job/'result.json';self.combat_log=(job/'run.log').open('w',encoding='utf-8')
+        self.combat_stop=job/'STOP';self.last_job_dir=job
         script='search_policy.py' if search else 'combat.py'
         args=[sys.executable,'-X','utf8',str(Path(__file__).with_name(script)),
               '--capture',str(job/'capture.json'),'--stage',str(self.stage_data['stage']['ID']),'--out',str(self.combat_output)]
         if search:
-            args+=['--budget',str(budget)]
+            args+=['--budget',str(budget),'--seconds',str(seconds),'--stop-file',str(self.combat_stop),'--robust-orders']
+            if self.stop_on_success.get():args+=['--stop-on-success']
+            if resume:args+=['--resume',str(resume)]
             if self.placements:
                 write_json(job/'plan.json',dict(placements=[dict(unit_id=uid,x=x,y=y) for (x,y),uid in self.placements.items()]))
                 args+=['--initial',str(job/'plan.json')]
         else:
             write_json(job/'plan.json',dict(placements=[dict(unit_id=uid,x=x,y=y) for (x,y),uid in self.placements.items()]))
             args+=['--plan',str(job/'plan.json')]
-        self.combat_input=(self.stage_data['stage']['ID'],self.level.get(),json.dumps(self.pets,sort_keys=True))
+        self.combat_input=(self.stage_data['stage']['ID'],self.level.get(),json.dumps(self.pets,sort_keys=True),sorted(self.placements.items()))
         try:self.combat_process=subprocess.Popen(args,stdout=self.combat_log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         except Exception:self.combat_log.close();raise
         self.sim_button.configure(state='disabled');self.search_button.configure(state='disabled')
         self.status.set('正在本地执行原始战斗逻辑…');self.root.after(500,self.poll_combat)
+        self.set_job_status(dict(status='searching',phase='initializing',budget=budget,max_seconds=seconds))
 
     def poll_combat(self):
         progress=self.combat_output.with_suffix('.progress.json')
         if self.combat_process.poll() is None:
             if progress.is_file():
                 try:
-                    p=json.loads(progress.read_text(encoding='utf-8'));v=p['evaluation']
-                    self.status.set(f'本地搜索 {p["evaluated"]}/{p["budget"]} · 最佳击杀 {v["kills"]}/{v["total_enemies"]}'+(' · 模拟通过' if v['won'] else ''))
+                    self.set_job_status(json.loads(progress.read_text(encoding='utf-8')))
                 except (ValueError,OSError,KeyError):pass
             self.root.after(500,self.poll_combat);return
         self.combat_log.close();self.sim_button.configure(state='normal');self.search_button.configure(state='normal')
         if self.combat_process.returncode:
             detail=(self.combat_output.parent/'run.log').read_text(encoding='utf-8')
-            self.status.set('模拟未完成，布阵未改动；日志：'+str(self.combat_output.parent/'run.log'))
-            messagebox.showerror('模拟未完成',detail[-1800:],parent=self.root);return
-        current=(self.stage_data['stage']['ID'],self.level.get(),json.dumps(self.pets,sort_keys=True))
+            try:value=json.loads(progress.read_text(encoding='utf-8'))
+            except (OSError,ValueError):value={}
+            reason=value.get('reason') or (detail.strip().splitlines()[-1] if detail.strip() else '进程提前退出；请查看运行详情')
+            self.set_job_status(dict(status='error',reason=reason))
+            return
+        report=json.loads(self.combat_output.read_text(encoding='utf-8'))
+        if report.get('checkpoint') and Path(report['checkpoint']).exists():
+            write_json(RUNTIME/'last-search.json',dict(checkpoint=report['checkpoint']))
+        current=(self.stage_data['stage']['ID'],self.level.get(),json.dumps(self.pets,sort_keys=True),sorted(self.placements.items()))
         if current!=self.combat_input:
-            self.status.set('模拟已保存，期间关卡或角色池发生变化；请用“打开模拟方案”查看。');return
-        self.guard(lambda:self.load_simulation(self.combat_output))
+            self.set_job_status(dict(status='error',reason='结果已保存，但期间关卡或角色池发生变化；请用“打开模拟方案”查看。'));return
+        if 'evaluation' in report and report.get('status')!='cancelled':self.guard(lambda:self.load_simulation(self.combat_output))
+        if report.get('status'):self.set_job_status(report)
+        else:self.set_job_status(dict(status='verified' if report['evaluation']['won'] else 'no_solution',evaluation=report['evaluation'],reason='单次模拟结束，未作多种子通关保证'))
+
+    def stop_search(self):
+        if getattr(self,'combat_process',None) is not None and self.combat_process.poll() is None and hasattr(self,'combat_stop'):
+            self.combat_stop.write_text('用户停止\n',encoding='utf-8')
+            self.run_status.set('正在停止搜索，完成当前一次模拟后保存最佳候选和续搜进度…')
+
+    def configured_limits(self):
+        from job_status import search_limits
+        limits=search_limits(self.search_budget.get(),self.search_minutes.get())
+        write_json(RUNTIME/'search-options.json',dict(candidates=self.search_budget.get(),minutes=self.search_minutes.get(),stop_on_success=self.stop_on_success.get()))
+        return limits
+
+    def resume_search(self):
+        try:last=json.loads((RUNTIME/'last-search.json').read_text(encoding='utf-8'));previous=Path(last['checkpoint'])
+        except (OSError,ValueError,KeyError):previous=RUNTIME/'search.checkpoint.json'
+        path=filedialog.askopenfilename(title='选择搜索进度（角色池和关卡须一致）',initialdir=previous.parent,initialfile=previous.name,
+            filetypes=[('搜索进度','*.checkpoint.json'),('JSON','*.json')])
+        if path:self.run_local(True,resume=Path(path))
+
+    def set_job_status(self,value,autoplay=False):
+        from job_status import autoplay_summary,search_summary
+        self.last_job_status=value
+        text=autoplay_summary(value) if autoplay else search_summary(value)
+        self.run_status.set(text);self.status.set(text)
+        search=value.get('search',value);terminal=value.get('event') in ('stopped','finished') or search.get('status') in ('error','cancelled','no_solution','verified')
+        failed=value.get('event')=='stopped' or search.get('status') in ('error','no_solution')
+        self.run_status_label.configure(foreground='#f6a18e' if failed else MUTED)
+        fractions=[]
+        if search.get('budget'):fractions.append(search.get('run_evaluated',0)/search['budget'])
+        if search.get('max_seconds'):fractions.append(search.get('run_elapsed_seconds',0)/search['max_seconds'])
+        if fractions or terminal:
+            self.run_progress.stop();self.run_progress.configure(mode='determinate',value=min(100,100*max(fractions,default=0)))
+        elif str(self.run_progress['mode'])!='indeterminate':
+            self.run_progress.configure(mode='indeterminate');self.run_progress.start(100)
+
+    def show_run_details(self):
+        window=tk.Toplevel(self.root);window.title('Tata · 运行详情')
+        text=tk.Text(window,width=100,height=25,wrap='word');text.pack(fill='both',expand=True)
+        value=self.last_job_status
+        text.insert('end',self.run_status.get()+'\n\n'+json.dumps(value,ensure_ascii=False,indent=2))
+        if self.last_job_dir:
+            text.insert('end','\n\n输出目录：'+str(self.last_job_dir))
+            log=Path(self.last_job_dir)/'run.log'
+            if log.exists():text.insert('end','\n\n日志末尾：\n'+log.read_text(encoding='utf-8')[-6000:])
+        text.configure(state='disabled')
 
     def open_simulation(self):
         path=filedialog.askopenfilename(title='打开模拟结果',initialdir=RUNTIME,filetypes=[('模拟结果 JSON','*.json')])
@@ -456,16 +534,18 @@ class MainlinePanel:
         if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:return
         if getattr(self,'combat_process',None) is not None and self.combat_process.poll() is None:raise ValueError('请等待当前本地模拟完成')
         if not GEOMETRY.is_file():raise ValueError('尚无已验证的游戏窗口校准配置，请先完成自动布阵校准')
-        count=int(self.autoplay_count.get());budget=int(self.search_budget.get())
-        if not 1<=count<=100 or not 4<=budget<=10000:raise ValueError('关卡数1–100，搜索预算4–10000')
+        count=int(self.autoplay_count.get());budget,seconds=self.configured_limits()
+        if not 1<=count<=100:raise ValueError('关卡数应为1–100')
         STOP.unlink(missing_ok=True)
         folder=RUNTIME/'autoplay-ui'/uuid.uuid4().hex;folder.mkdir(parents=True,exist_ok=True)
         self.autoplay_run_dir=folder
+        self.last_job_dir=folder
         self.autoplay_log=(folder/'run.log').open('w',encoding='utf-8')
-        args=[sys.executable,'-X','utf8',str(Path(__file__).with_name('autoplay.py')),'--stages',str(count),'--budget',str(budget),'--run-dir',str(folder)]
+        args=[sys.executable,'-X','utf8',str(Path(__file__).with_name('autoplay.py')),'--stages',str(count),'--budget',str(budget),'--seconds',str(seconds),'--run-dir',str(folder)]
+        if not self.stop_on_success.get():args+=['--optimize-until-limit']
         try:self.autoplay_process=subprocess.Popen(args,stdout=self.autoplay_log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         except Exception:self.autoplay_log.close();raise
-        self.status.set('正在同步、模拟并自动布阵；运行时不要操作游戏，F8或点停止可结束。')
+        self.set_job_status(dict(event='initializing',completed=[]),autoplay=True)
         self.root.after(500,self.poll_autoplay)
 
     def stop_autoplay(self):
@@ -475,23 +555,23 @@ class MainlinePanel:
 
     def close(self):
         if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:self.stop_autoplay()
+        self.stop_search()
         self.replay_playing=False;self.root.destroy()
 
     def poll_autoplay(self):
-        path=RUNTIME/'autoplay-status.json'
+        path=self.autoplay_run_dir/'status.json';state=None
         if path.is_file():
             try:
                 state=json.loads(path.read_text(encoding='utf-8'))
-                if state.get('run_dir')==str(self.autoplay_run_dir):
-                    label={'planning':'同步后复核阵容','searching':'搜索阵容','deploy':'自动布阵',
-                        'deployment_verified':'整队核验通过','request_order_verified':'入场顺序复核通过','battle_started':'实战中','battle_settled':'实战已结算',
-                        'preparation_ready':'下一关布阵就绪','stage_advanced':'已进入下一关','finished':'本次完成','stopped':'已停止'}
-                    self.status.set(f'自动推关 · 已通过 {len(state.get("completed",[]))} 关 · {label.get(state.get("event"),state.get("event",""))} · {state.get("reason","")}')
+                self.set_job_status(state,autoplay=True)
             except (ValueError,OSError):pass
         if self.autoplay_process.poll() is None:self.root.after(500,self.poll_autoplay)
         else:
             self.autoplay_log.close()
-            if self.autoplay_process.returncode:self.status.set('自动推关已停止，查看日志：'+self.autoplay_log.name)
+            if not state or state.get('event') not in ('stopped','finished'):
+                detail=Path(self.autoplay_log.name).read_text(encoding='utf-8').strip()
+                reason=detail.splitlines()[-1] if detail else f'进程提前退出（退出码 {self.autoplay_process.returncode}），请查看运行详情'
+                self.set_job_status(dict(event='stopped',reason=reason,reason_code='process_exit'),autoplay=True)
 
     def toggle_replay(self):
         if not self.current_report or not self.current_report['evaluation'].get('frames'):raise ValueError('请先模拟或打开带回放的方案')

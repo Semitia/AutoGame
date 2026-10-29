@@ -26,6 +26,15 @@ def outcome(kills,seed=123,won=False,seconds=20):
 
 
 class TacticalTests(unittest.TestCase):
+    def test_player_suggestion_is_scoped_and_requires_ownership(self):
+        sim,s,t=fixture();s['stage']['DisplayName']='11-30';t.ids+=[17,20]
+        base=[dict(unit_id=17,x=1,y=2),dict(unit_id=1,x=2,y=2)]
+        hints=list(t.player_seeds(base))
+        self.assertEqual(hints[0][0][0]['unit_id'],20)
+        self.assertTrue(hints[0][1].startswith('player-hypothesis:'))
+        s['stage']['DisplayName']='12-1';self.assertEqual(list(t.player_seeds(base)),[])
+        s['stage']['DisplayName']='11-30';t.ids.remove(20);self.assertEqual(list(t.player_seeds(base)),[])
+
     def test_wave_counts_are_not_duplicated_for_each_column(self):
         sim,s,t=fixture();p=stage_profile(s)
         self.assertEqual(p['total'],3)

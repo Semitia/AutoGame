@@ -141,5 +141,10 @@ class AutoplayTests(unittest.TestCase):
         self.assertEqual(seeds,[123456,701,2029,8191])
         self.assertNotIn('actual_order_validation',r)
 
+    def test_overnight_roster_change_blocks_deployment(self):
+        runner=Runner.__new__(Runner);runner.sim=SimpleNamespace(capture=dict(shared_level=235,pets=[dict(tid=1)]))
+        with patch('live_roster.read_live',return_value=dict(shared_level=236,pets=[dict(tid=1)])):
+            with self.assertRaisesRegex(RuntimeError,'养成已改变'):runner.verify_roster()
+
 
 if __name__=='__main__':unittest.main()

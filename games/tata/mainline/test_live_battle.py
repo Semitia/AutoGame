@@ -1,7 +1,7 @@
 """Synthetic Lua ABI fixtures, including early server stage advancement."""
 import struct
 import unittest
-from live_battle import LiveBattle,find_instances,lua_pairs
+from live_battle import LiveBattle,find_instances,lua_pairs,current_prepare
 from live_roster import LiveReadError
 from test_live_roster import Fixture
 
@@ -36,8 +36,23 @@ class LiveBattleTests(unittest.TestCase):
         self.assertNotIn('ed.Unrelated',live.refs)
 
     def test_multiple_active_controllers_fail_closed(self):
-        live,_=self.fixture();live.refs['ed.StageBattleController']*=2
+        live,f=self.fixture();cls=f.table({'__cname':'ed.StageBattleController'})
+        live.refs['ed.StageBattleController'].append(f.table(dict(stageID=829,inBattle=True,**{'class':cls})))
         with self.assertRaisesRegex(LiveReadError,'不唯一'):live.snapshot()
+
+    def test_duplicate_references_are_not_duplicate_objects(self):
+        live,_=self.fixture();live.refs['ed.StageBattleController']*=2
+        self.assertEqual(live.snapshot()['controller']['stageID'],829)
+
+    def test_old_prepare_views_are_excluded_by_lifecycle_and_identity(self):
+        f=Fixture();controller=f.table({});other=f.table({});unit=f.table(dict(tid=11))
+        selected=f.table({11:unit});current=dict(stageID=829,battleController=controller,selectedUnitDict=selected,isShow=False)
+        variants=[dict(current,isBaseViewClose=True),dict(current,_behavior_destructed=True),
+            dict(current,_duringOut=True),dict(current,battleController=other),
+            dict(current,selectedUnitDict=f.table({}))]
+        self.assertIs(current_prepare(f.heap(),variants+[current],controller,{},829,{unit}),current)
+        with self.assertRaisesRegex(LiveReadError,'2 个有效布阵'):
+            current_prepare(f.heap(),[current,dict(current)],controller,{},829,{unit})
 
     def test_reused_class_reference_requires_relocation(self):
         live,_=self.fixture();live.refs['ed.StageModel']=live.refs['ed.StageBattleController']
