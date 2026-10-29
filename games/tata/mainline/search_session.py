@@ -9,10 +9,11 @@ from combat import LIMITATIONS
 from experience import context_for,stable_hash,plan_key,formation_key
 from model import read_json,write_json
 from tactics import Tactics,BASE_WEIGHTS,FEATURE_VERSION
+from review import review_seeds,passed
 
 
 REASONS={
-    'verified':'找到全部复核通过的候选',
+    'verified':'找到符合当前复核设置的通过候选',
     'candidate_limit':'达到候选数量上限',
     'time_limit':'达到搜索时长上限',
     'user_stop':'用户停止搜索，已保留最佳候选和进度',
@@ -41,16 +42,14 @@ def order_samples(plan,robust):
 
 def rank(candidate):
     checks=candidate.get('validation',[])
-    complete=candidate.get('validation_complete',False)
-    passed=complete and checks and all(v['won'] for v in checks) and candidate['evaluation']['won']
     fraction=sum(v['won'] for v in checks)/len(checks) if checks else 0
     scores=[candidate['score']]+[v['score'] for v in checks]
-    return bool(passed),fraction,bool(candidate['evaluation']['won']),min(scores),sum(scores)/len(scores)
+    return passed(candidate),fraction,bool(candidate['evaluation']['won']),min(scores),sum(scores)/len(scores)
 
 
 def run_search(sim,stage,budget=120,seed=123456,progress=None,initial_plan=None,experience=None,
                max_seconds=0,stop_path=None,stop_when_verified=False,checkpoint=None,resume=None,
-               status=None,check_stop=None,robust_orders=False,clock=None):
+               status=None,check_stop=None,robust_orders=False,clock=None,review_mode=None):
     """Limits apply between VM evaluations; 0 disables that limit.
 
     Resume grants a new time/candidate allowance and retains the accumulated
@@ -58,6 +57,8 @@ def run_search(sim,stage,budget=120,seed=123456,progress=None,initial_plan=None,
     """
     if type(budget) is not int or budget<0:raise ValueError('候选上限应为非负整数，0表示不限')
     if not math.isfinite(max_seconds) or max_seconds<0:raise ValueError('搜索时长应为非负有限数，0表示不限')
+    review_mode=review_mode or ('full' if robust_orders else 'light')
+    seeds=review_seeds(review_mode);robust_orders=review_mode=='full'
     clock=clock or time.monotonic;started=clock();last_checkpoint=started
     rng=random.Random(seed);tactics=Tactics(sim,stage)
     context=context_for(sim,stage,tactics);context_hash=stable_hash(context)
@@ -72,7 +73,7 @@ def run_search(sim,stage,budget=120,seed=123456,progress=None,initial_plan=None,
         saved=read_json(resume)
         if (saved.get('schema_version')!=1 or saved.get('engine_fingerprint')!=engine or
             saved.get('context_hash')!=context_hash or saved.get('search_seed')!=seed or
-            saved.get('robust_orders')!=robust_orders):
+            saved.get('robust_orders')!=robust_orders or saved.get('review_mode','full')!=review_mode):
             raise ValueError('搜索进度与当前关卡、角色池、引擎或复核设置不一致；请开始新搜索')
         rng.setstate(tuple_tree(saved['rng_state']));seen=set(saved['seen']);elite=saved['elite']
         evaluated=saved['evaluated'];simulations=saved['simulations'];previous_elapsed=saved['elapsed_seconds']
@@ -111,7 +112,7 @@ def run_search(sim,stage,budget=120,seed=123456,progress=None,initial_plan=None,
         if not checkpoint or (not force and clock()-last_checkpoint<30):return
         sort_elite()
         write_json(checkpoint,dict(schema_version=1,engine_fingerprint=engine,context_hash=context_hash,
-            search_seed=seed,robust_orders=robust_orders,rng_state=rng.getstate(),seen=sorted(seen),elite=elite,
+            search_seed=seed,robust_orders=robust_orders,review_mode=review_mode,rng_state=rng.getstate(),seen=sorted(seen),elite=elite,
             evaluated=evaluated,simulations=simulations,elapsed_seconds=previous_elapsed+clock()-started,
             coverage_base=coverage_base,coverage_index=coverage_index,coverage_order=coverage_order,operators=operators,
             coverage_round=coverage_round,coverage_checked=coverage_checked,coverage_bases=sorted(coverage_bases)))
@@ -119,7 +120,7 @@ def run_search(sim,stage,budget=120,seed=123456,progress=None,initial_plan=None,
 
     def emit(phase):
         sort_elite();best=elite[0] if elite else None
-        payload=dict(status='searching',phase=phase,evaluated=evaluated,run_evaluated=evaluated-baseline,
+        payload=dict(status='searching',phase=phase,review_mode=review_mode,evaluated=evaluated,run_evaluated=evaluated-baseline,
             budget=budget,max_seconds=max_seconds,elapsed_seconds=previous_elapsed+clock()-started,
             run_elapsed_seconds=clock()-started,simulations=simulations,
             replacement_checked=coverage_index,replacement_total=len(coverage),replacement_round=coverage_round,
@@ -145,7 +146,7 @@ def run_search(sim,stage,budget=120,seed=123456,progress=None,initial_plan=None,
     def validate(candidate):
         checks=candidate.setdefault('validation',[])
         samples=order_samples(candidate['placements'],robust_orders)
-        tasks=[(name,rows,s) for name,rows in samples for s in (701,2029,8191)]
+        tasks=[(name,rows,s) for name,rows in samples for s in seeds]
         candidate['validation_expected']=len(tasks)
         candidate['validation_complete']=False
         for name,rows,number in tasks[len(checks):]:
@@ -164,7 +165,7 @@ def run_search(sim,stage,budget=120,seed=123456,progress=None,initial_plan=None,
         outcome=simulate(plan,seed);seen.add(key);evaluated+=1
         features=tactics.features(plan)
         candidate=dict(placements=plan,evaluation=outcome,score=outcome['score'],origin=origin,
-            tactical_features=features,validation=[],validation_complete=False,validation_expected=3)
+            tactical_features=features,validation=[],validation_complete=False,validation_expected=len(seeds))
         identifier=record(plan,features,outcome)
         if identifier is not None:candidate['evidence_id']=identifier
         if experience and parent and parent.get('evidence_id') is not None:
@@ -229,7 +230,7 @@ def run_search(sim,stage,budget=120,seed=123456,progress=None,initial_plan=None,
         stop_reason=reason,reason=REASONS.get(reason,reason),search_seed=seed,finalists=finalists,
         checkpoint=str(checkpoint) if checkpoint else None,replacement_checked=coverage_index,replacement_total=len(coverage),
         replacement_round=coverage_round,replacement_checked_total=coverage_checked,
-        feature_version=FEATURE_VERSION,proposal_weights=weights,robust_orders=robust_orders,
+        feature_version=FEATURE_VERSION,proposal_weights=weights,robust_orders=robust_orders,review_mode=review_mode,
         experience=dict(enabled=bool(experience),path=str(experience.path) if experience else None,before=before,
             after=experience.stats(engine) if experience else {},retrieved=[{k:v for k,v in m.items() if k!='placements'} for m in memories],
             previous_updates=old_updates,new_updates=learned,operators=operators),

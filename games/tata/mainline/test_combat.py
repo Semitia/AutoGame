@@ -31,7 +31,7 @@ class SearchTests(unittest.TestCase):
                 assert all((p['x'],p['y']) in slots_for(stage) for p in placements)
                 score=sum(self_ids)+sum(p['x'] for p in placements if p['unit_id']==3)
                 return dict(score=score,won=score>=8,kills=score,total_enemies=10,battle_secs=5,seed=seed)
-        oracle=Oracle();result=search(oracle,s,budget=12)
+        oracle=Oracle();result=search(oracle,s,budget=12,review_mode='full')
         self.assertEqual(result['evaluated'],12)
         self.assertEqual(set(oracle.seeds),{123456,701,2029,8191})
         self.assertFalse(result['calibrated'])

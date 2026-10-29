@@ -63,10 +63,21 @@ def find_game_window():
     return matches[0]
 
 
+class LayoutChanged(RuntimeError):
+    def __init__(self,gesture=False):
+        super().__init__('窗口正在移动或缩放，当前动作已取消；下次启动会自动识别，无需标点')
+        self.gesture=gesture
+
+
 class GameInput:
-    def __init__(self,width,height):
+    def __init__(self,width,height,adaptive=False):
         self.window=DesktopWindow(find_game_window());self.reference=(width,height)
+        self.adaptive=adaptive;self.gesture_bounds=None
         self.initial_dimensions=self.window.bounds()[2:]
+
+    def set_reference(self,width,height):
+        if self.window.bounds()[2:]!=(width,height):raise LayoutChanged()
+        self.reference=(width,height);self.initial_dimensions=(width,height)
 
     def focus(self):
         if user.IsIconic(self.window.hwnd):user.ShowWindow(self.window.hwnd,9)
@@ -75,10 +86,13 @@ class GameInput:
     def stop_check(self):
         if self.window.emergency_stop():raise RuntimeError('F8 stop')
         if not self.window.is_foreground():raise RuntimeError('游戏失去前台，停止输入')
-        if self.window.bounds()[2:]!=self.initial_dimensions:raise RuntimeError('游戏窗口尺寸改变，停止输入')
+        bounds=self.window.bounds()
+        if self.gesture_bounds is not None and bounds!=self.gesture_bounds:raise LayoutChanged(gesture=True)
+        if not self.adaptive and bounds[2:]!=self.initial_dimensions:raise RuntimeError('游戏窗口尺寸改变，停止输入')
 
     def point(self,x,y):
         self.stop_check();left,top,width,height=self.window.bounds()
+        if self.adaptive and (width,height)!=self.initial_dimensions:raise LayoutChanged()
         if not 0<=x<self.reference[0] or not 0<=y<self.reference[1]:raise ValueError('输入坐标越界')
         p=W.POINT(round(left+x*width/self.reference[0]),round(top+y*height/self.reference[1]))
         if user.GetAncestor(user.WindowFromPoint(p),2)!=self.window.hwnd:raise RuntimeError('游戏被其他窗口遮挡')
@@ -89,21 +103,29 @@ class GameInput:
         if user.SendInput(1,C.byref(event),C.sizeof(Input))!=1:raise RuntimeError('鼠标输入被Windows拒绝')
 
     def click(self,x,y):
-        p=self.point(x,y);user.SetCursorPos(p.x,p.y);self.button(True)
-        try:time.sleep(.075)
-        finally:self.button(False)
+        self.gesture_bounds=self.window.bounds()
+        down=False
+        try:
+            p=self.point(x,y);user.SetCursorPos(p.x,p.y);self.button(True);down=True
+            time.sleep(.075);self.stop_check()
+        finally:
+            if down:self.button(False)
+            self.gesture_bounds=None
 
     def drag(self,from_x,from_y,to_x,to_y):
-        start=self.point(from_x,from_y);end=self.point(to_x,to_y)
-        user.SetCursorPos(start.x,start.y);time.sleep(.05);self.button(True)
+        self.gesture_bounds=self.window.bounds();down=False
         try:
+            start=self.point(from_x,from_y);end=self.point(to_x,to_y)
+            user.SetCursorPos(start.x,start.y);time.sleep(.05);self.stop_check();self.button(True);down=True
             time.sleep(.14)
             for i in range(1,25):
                 self.stop_check()
                 user.SetCursorPos(round(start.x+(end.x-start.x)*i/24),round(start.y+(end.y-start.y)*i/24))
                 time.sleep(.018)
             time.sleep(.06)
-        finally:self.button(False)
+        finally:
+            if down:self.button(False)
+            self.gesture_bounds=None
 
 
 def main():

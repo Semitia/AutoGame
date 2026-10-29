@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from experience import plan_key
 from search_policy import search
-from autoplay import main,verified
+from autoplay import Runner,main,verified
 from live_roster import LiveReadError
 from model import read_json,write_json
 from test_tactics import fixture
@@ -29,6 +29,69 @@ class Oracle:
 
 
 class SearchSessionTests(unittest.TestCase):
+    def test_default_review_only_adds_one_simulation(self):
+        sim=Oracle();sim.answer=lambda rows,seed:(True,100)
+        result=search(sim,sim.stage,budget=10,stop_when_verified=True)
+        self.assertEqual([seed for _,seed in sim.calls],[123456,701])
+        self.assertEqual(result['review_mode'],'light');self.assertTrue(verified(result))
+
+    def test_disabled_review_accepts_training_winner_without_extra_simulations(self):
+        sim=Oracle();sim.answer=lambda rows,seed:(True,100)
+        result=search(sim,sim.stage,budget=10,stop_when_verified=True,review_mode='none')
+        self.assertEqual([seed for _,seed in sim.calls],[123456]);self.assertTrue(verified(result))
+        self.assertEqual(result['finalists'][0]['validation'],[])
+        self.assertIn('关闭',search_summary(result))
+
+    def test_full_review_retains_all_seed_and_order_combinations(self):
+        from search_session import order_samples
+        sim=Oracle();sim.answer=lambda rows,seed:(True,100)
+        result=search(sim,sim.stage,budget=10,stop_when_verified=True,review_mode='full')
+        expected=[(plan_key(rows),seed) for _,rows in order_samples(result['placements'],True) for seed in (701,2029,8191)]
+        self.assertEqual(sim.calls[1:],expected);self.assertTrue(verified(result))
+
+    def test_light_review_failure_does_not_deploy_or_stop_as_success(self):
+        sim=Oracle();sim.answer=lambda rows,seed:(seed==123456,100)
+        result=search(sim,sim.stage,budget=1,stop_when_verified=True)
+        self.assertEqual(result['status'],'no_solution');self.assertFalse(verified(result))
+        self.assertEqual(result['stop_reason'],'candidate_limit')
+
+    def test_resume_rejects_changed_review_mode(self):
+        with tempfile.TemporaryDirectory() as folder:
+            checkpoint=Path(folder)/'result.checkpoint.json';sim=Oracle()
+            search(sim,sim.stage,budget=1,checkpoint=checkpoint)
+            with self.assertRaisesRegex(ValueError,'复核设置不一致'):
+                search(sim,sim.stage,budget=1,resume=checkpoint,review_mode='none')
+
+    def test_reusing_current_formation_respects_review_mode(self):
+        for mode,seeds in (('light',[123456,701]),('none',[123456]),('full',[123456,701,2029,8191])):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as folder:
+                sim=Oracle();sim.answer=lambda rows,seed:(True,100);sim.capture['shared_level']=235
+                runner=Runner.__new__(Runner);runner.review_mode=mode;runner.stop_when_verified=True
+                runner.catalog=SimpleNamespace(stage=lambda _:sim.stage);runner.folder=Path(folder)
+                runner.event=lambda *args,**kw:None;runner.compute_stopped=lambda:False
+                memory=SimpleNamespace(record=lambda *args:None,close=lambda:None)
+                state=dict(current_stage_id=1,request_order=[dict(unit_id=1,x=1,y=2),dict(unit_id=2,x=2,y=2)])
+                with patch('live_roster.read_live',return_value=sim.capture),patch('live_roster.to_roster'),\
+                    patch('combat.Simulator',return_value=sim),patch('experience.Experience',return_value=memory):
+                    result=runner.plan(state)
+                self.assertEqual([seed for _,seed in sim.calls],seeds);self.assertTrue(verified(result))
+
+    def test_search_cli_passes_review_choice_to_the_search(self):
+        from search_policy import main as search_main
+        for choice in (None,'none','full'):
+            with self.subTest(choice=choice),tempfile.TemporaryDirectory() as folder:
+                path=Path(folder);write_json(path/'capture.json',{})
+                sim=Oracle();sim.answer=lambda rows,seed:(True,100)
+                catalog=SimpleNamespace(stages=[dict(id=1,name='1-1')],stage=lambda _:sim.stage)
+                args=['search','--capture',str(path/'capture.json'),'--stage','1-1','--budget','1',
+                    '--stop-on-success','--no-experience','--out',str(path/'result.json')]
+                if choice:args+=['--review',choice]
+                with patch('sys.argv',args),patch('search_policy.Simulator',return_value=sim),\
+                    patch('search_policy.Catalog',return_value=catalog),patch('builtins.print'):
+                    search_main()
+                result=read_json(path/'result.json')
+                self.assertEqual(result['review_mode'],choice or 'light');self.assertTrue(verified(result))
+
     def test_time_limit_stops_without_an_extra_replay(self):
         sim=Oracle();result=search(sim,sim.stage,budget=0,max_seconds=3,clock=lambda:sim.elapsed)
         self.assertEqual(result['stop_reason'],'time_limit');self.assertEqual(len(sim.calls),3)

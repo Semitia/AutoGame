@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from autoplay import Runner,WaitTimeout,canonical,card_point,is_preparing,next_stage_id,verified
+from autoplay import Runner,WaitTimeout,canonical,card_point,is_preparing,is_chapter,next_stage_id,verified
 
 
 def ready(stage=829):
@@ -21,6 +21,25 @@ def report():
 
 
 class AutoplayTests(unittest.TestCase):
+    def test_chapter_entry_only_opens_preparation_and_verifies_the_expected_stage(self):
+        from PIL import Image
+        chapter=dict(screen='chapter',current_stage_id=579,chapter=dict(stage_id=579,isCarMoving=False))
+        prepared=ready(579)
+        runner=Runner.__new__(Runner);runner.automatic=True
+        runner.layout=SimpleNamespace(capture=lambda:Image.new('RGB',(856,1568),'white'))
+        seen=[]
+        runner.input=SimpleNamespace(set_reference=lambda *a:seen.append(('reference',a)),click=lambda *a:seen.append(('click',a)))
+        runner.snapshot=lambda:chapter;runner.relocate=lambda:seen.append(('relocate',))
+        def wait(predicate,timeout):return next(s for s in (chapter,prepared) if predicate(s))
+        runner.wait=wait;runner.refresh_layout=lambda s:seen.append(('recognized',s['current_stage_id']))
+        runner.event=lambda *a,**k:None
+        with patch('auto_layout.chapter_start_button',return_value=[25,1415,805,95]),patch('autoplay.time.sleep'):
+            result=runner.enter_chapter(chapter)
+        self.assertTrue(is_preparing(result,579))
+        self.assertEqual([row[0] for row in seen],['reference','click','relocate','recognized'])
+        with self.assertRaises(RuntimeError):runner.enter_chapter(chapter,580)
+        self.assertFalse(is_chapter(dict(chapter,controller={'stageID':579})))
+
     def test_requires_training_and_three_successful_rechecks(self):
         r=report();self.assertTrue(verified(r))
         for checks in ([],[dict(won=True)]*2,[dict(won=True)]*2+[dict(won=False)]):
@@ -125,6 +144,7 @@ class AutoplayTests(unittest.TestCase):
 
     def test_actual_order_failure_prevents_battle_and_keeps_original_report(self):
         runner=Runner.__new__(Runner);r=report();r.update(engine_fingerprint='test',context={})
+        runner.review_mode='full'
         runner.catalog=SimpleNamespace(stage=lambda _:{});runner.check_stop=lambda:None
         seeds=[]
         def evaluate(stage,order,seed):
@@ -139,6 +159,35 @@ class AutoplayTests(unittest.TestCase):
                     runner.verify_request_order(829,dict(request_order=r['placements']),r)
             self.assertTrue((runner.folder/'preflight-829.json').exists())
         self.assertEqual(seeds,[123456,701,2029,8191])
+        self.assertNotIn('actual_order_validation',r)
+
+    def test_preflight_respects_review_mode_and_still_checks_actual_formation(self):
+        for mode,seeds in (('light',[123456]),('none',[]),('full',[123456,701,2029,8191])):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
+                runner=Runner.__new__(Runner);runner.review_mode=mode;runner.folder=Path(directory)
+                runner.catalog=SimpleNamespace(stage=lambda _:{});runner.check_stop=lambda:None
+                runner.event=lambda *args,**kw:None;calls=[]
+                def evaluate(stage,order,seed):calls.append(seed);return dict(won=True)
+                runner.sim=SimpleNamespace(evaluate=evaluate)
+                memory=SimpleNamespace(record=lambda *args:None,close=lambda:None)
+                r=report();r.update(engine_fingerprint='test',context={})
+                with patch('experience.Experience',return_value=memory),patch('tactics.Tactics'):
+                    runner.verify_request_order(829,dict(request_order=r['placements']),r)
+                self.assertEqual(calls,seeds)
+                self.assertEqual(len(r['actual_order_validation']),len(seeds))
+                with self.assertRaisesRegex(RuntimeError,'无法核验'):
+                    runner.verify_request_order(829,dict(request_order=[dict(unit_id=11,x=1,y=1)]),r)
+
+    def test_light_preflight_loss_stops_before_start(self):
+        runner=Runner.__new__(Runner);runner.review_mode='light';runner.check_stop=lambda:None
+        runner.catalog=SimpleNamespace(stage=lambda _:{});runner.sim=SimpleNamespace(evaluate=lambda *args:dict(won=False))
+        r=report();r.update(engine_fingerprint='test',context={})
+        memory=SimpleNamespace(record=lambda *args:None,close=lambda:None)
+        with tempfile.TemporaryDirectory() as directory:
+            runner.folder=Path(directory)
+            with patch('experience.Experience',return_value=memory),patch('tactics.Tactics'):
+                with self.assertRaisesRegex(RuntimeError,'0/1'):
+                    runner.verify_request_order(829,dict(request_order=r['placements']),r)
         self.assertNotIn('actual_order_validation',r)
 
     def test_overnight_roster_change_blocks_deployment(self):

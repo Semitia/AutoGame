@@ -8,12 +8,12 @@ from live_roster import LuaHeap,TableRef,LiveReadError,WindowsReader,renderer_pi
 from model import RUNTIME,write_json
 
 
-CLASSES={'ed.StageModel','ed.StageBattleController','ed.StageBattlePrepareView','ed.StageBattleVictoryView'}
+CLASSES={'ed.StageModel','ed.StageBattleController','ed.StageBattlePrepareView','ed.StageBattleVictoryView','ed.WorldMapView'}
 
 
-def find_instances(data):
+def find_instances(data, classes=CLASSES, keys=(b'_stageID',b'stageID',b'battleController',b'stageModel')):
     heap=LuaHeap(lambda p,n:data[p:p+n],len(data));nodes=[]
-    for key in (b'_stageID',b'stageID',b'battleController'):
+    for key in keys:
         pos=0
         while (pos:=data.find(key+b'\0',pos))>=0:
             if pos>=16 and data[pos-12]==4 and data[pos-9]==len(key):
@@ -32,7 +32,7 @@ def find_instances(data):
             ref=TableRef(p);table=heap.table(ref)
             if not isinstance(table.get('class'),TableRef):continue
             name=heap.table(table['class']).get('__cname')
-            if name in CLASSES:result.setdefault(name,[]).append(ref)
+            if name in classes:result.setdefault(name,[]).append(ref)
         except (LiveReadError,UnicodeError,struct.error):continue
     return result
 
@@ -74,9 +74,21 @@ def current_prepare(heap,candidates,controller_ref,controller,stage,unit_refs=No
     return matched[0] if matched else None
 
 
+def current_chapter(candidates,stage_ref,stage):
+    # WorldMapView.isShow can be false even on the visible chapter screen.
+    # Require its live StageModel link and lifecycle, and only use this when
+    # no battle controller is active; the map may stay cached behind combat.
+    matched=[view for view in candidates if open_view(view) and view.get('_isStarted') is True
+             and view.get('isExiting') is not True and view.get('stageModel')==stage_ref
+             and view.get('_lastPlayerStageID',stage)==stage]
+    if len(matched)>1:raise LiveReadError('当前章节地图不唯一，请关闭重复的地图界面')
+    return matched[0] if matched else None
+
+
 class LiveBattle:
-    def __init__(self):
+    def __init__(self,account_key=None):
         self.reader=None
+        self.account_key=account_key
         found=[]
         for pid in renderer_pids():
             reader=WindowsReader(pid)
@@ -84,7 +96,12 @@ class LiveBattle:
                 for base,size in reader.heaps():
                     data=reader.read(base,size)
                     if not all(marker in data for marker in (b'cs_common.Dn_Pet',b'PetModel',b'evoTID')):continue
-                    refs=find_instances(data)
+                    if account_key:
+                        from live_session import session_fields
+                        refs=find_instances(data,CLASSES|{'ed.PlayerModel'},(b'_stageID',b'stageID',b'battleController',b'_uid',b'stageModel'))
+                        frozen=LuaHeap(lambda p,n:data[p:p+n],len(data))
+                        if session_fields(frozen,refs)['account']['key']!=account_key:continue
+                    else:refs=find_instances(data)
                     if refs.get('ed.StageModel'):found.append((pid,base,size,refs))
             finally:reader.close()
         if len(found)!=1:raise LiveReadError(f'需要唯一已登录塔塔主线模型，当前找到 {len(found)} 个')
@@ -110,17 +127,35 @@ class LiveBattle:
     def tables(self,name):return [t for _,t in self.instances(name)]
 
     def snapshot(self,debug=False):
+        if getattr(self,'account_key',None):
+            from live_session import session_fields
+            if session_fields(self.heap,self.refs)['account']['key']!=self.account_key:
+                raise LiveReadError('游戏账号已切换，停止自动输入；请重新同步账号')
         result=dict(captured_at=datetime.now(timezone.utc).isoformat())
-        stages=self.tables('ed.StageModel')
+        stage_instances=self.instances('ed.StageModel')
+        stages=[table for _,table in stage_instances]
         if len(stages)!=1:raise LiveReadError('主线进度模型不唯一')
         result['current_stage_id']=stages[0].get('_stageID')
         all_controllers=self.instances('ed.StageBattleController')
         controllers=[(ref,c) for ref,c in all_controllers if c.get('stageID')==result['current_stage_id'] and c.get('inBattle') is True]
-        if all_controllers and not controllers:raise LiveReadError('关卡控制器已切换，需要重新定位')
+        if not controllers and any(c.get('inBattle') is True for _,c in all_controllers):
+            raise LiveReadError('关卡控制器已切换，需要重新定位')
         if len(controllers)>1:raise LiveReadError('当前关卡战斗控制器不唯一')
+        if not controllers:
+            chapter=current_chapter(self.tables('ed.WorldMapView'),stage_instances[0][0],result['current_stage_id'])
+            if chapter:
+                result['chapter']=dict(stage_id=result['current_stage_id'],**{
+                    k:chapter[k] for k in ('isCarMoving','isStartingBattle','isOpeningWorldMapDye','tweenCameraToChapterBossing') if type(chapter.get(k)) is bool})
+                result['screen']='chapter'
+                return result
+            result['screen']='inactive'
+            return result
         controller_ref=None;c={};unit_refs=None
         if controllers:
             controller_ref,c=controllers[0]
+            if isinstance(c.get('battleFieldRootOffset'),TableRef):
+                offset=self.heap.table(c['battleFieldRootOffset'])
+                result['field_offset']={k:offset[k] for k in ('x','y') if type(offset.get(k)) in (int,float)}
             result['controller']={k:c[k] for k in ('stageID','battleID','battleMode','inBattle','inBattleScene','isAutoBattle','timeScale','defeatFlag') if type(c.get(k)) in (int,bool,float,str)}
             if debug:result['controller_keys']=list(c)
             if isinstance(c.get('params'),TableRef):

@@ -9,25 +9,41 @@ from model import (Catalog, DATA, DATASET, RUNTIME, load_roster, snapshot, write
                    validate_pet, filtered_pets, shared_level_value, SharedLevelConflict)
 from formation import move_unit
 from policy import recommend
+from review import LABELS
 from rules import evolution_gate,feed_candidates
 from widgets import Art, Gallery, BattleBoard, ScrollArea, StarPicker, draw_stars, BG, PANEL, TEXT, MUTED, ACCENT
 
 
 class MainlinePanel:
-    def __init__(self, root, catalog, state=RUNTIME/'roster.json', initial_stage='1-1'):
+    def __init__(self, root, catalog, state=RUNTIME/'roster.json', initial_stage=None, profile_store=None, auto_sync=True):
         self.root, self.catalog, self.state = root, catalog, Path(state)
+        self.profiles=profile_store
+        if self.profiles is None and self.state == RUNTIME/'roster.json':
+            from profiles import Profiles
+            self.profiles=Profiles()
+        workspace={}
+        if self.profiles and self.profiles.active:
+            self.state=self.profiles.folder(self.profiles.active)/'roster.json'
+            workspace=self.profiles.workspace(self.profiles.active)
+            record=self.profiles.index['accounts'][self.profiles.active]
+            if initial_stage is None:initial_stage=workspace.get('stage_id',record.get('stage_id'))
+        self.follow_game=tk.BooleanVar(value=workspace.get('follow_game',True))
+        self.auto_sync=tk.BooleanVar(value=auto_sync and self.profiles is not None)
+        self._profile_generation=0
         self.pets, self.placements, self.candidates = [], {}, []
         self.selected_id, self.stage_data, self.ghost, self.drag_id = None, None, None, None
         self.plan_mode, self.notes, self.read_error = 'manual', '', False
-        self.initial_stage=initial_stage;self.replay_frame=None;self.replay_index=0;self.replay_playing=False
+        self.initial_stage=str(initial_stage or '1-1');self.replay_frame=None;self.replay_index=0;self.replay_playing=False
         self.current_report=None;self.show_grid=tk.BooleanVar(value=False);self.search_budget=tk.StringVar(value='0')
         self.search_minutes=tk.StringVar(value='10');self.stop_on_success=tk.BooleanVar(value=True)
+        self.review_choice=tk.StringVar(value=LABELS['light'])
         try:
             from job_status import search_limits
             settings=json.loads((RUNTIME/'search-options.json').read_text(encoding='utf-8'))
             search_limits(settings['candidates'],settings['minutes'])
             self.search_budget.set(str(settings['candidates']));self.search_minutes.set(str(settings['minutes']))
             self.stop_on_success.set(bool(settings['stop_on_success']))
+            self.review_choice.set(LABELS.get(settings.get('review_mode'),LABELS['light']))
         except (OSError,ValueError,KeyError,TypeError):pass
         self.run_status=tk.StringVar(value='尚未启动。可只做本地搜索；时长/候选上限填0表示不限。')
         self.last_job_status={};self.last_job_dir=None
@@ -52,6 +68,17 @@ class MainlinePanel:
         entry = ttk.Entry(header,textvariable=self.level,width=7); entry.pack(side='right')
         entry.bind('<Return>',lambda _:self.guard(self.save_level))
         ttk.Label(header,text='共享等级 Lv. ').pack(side='right')
+        if self.profiles:
+            accounts=ttk.Frame(root,padding=(18,0,18,6));accounts.pack(fill='x')
+            ttk.Label(accounts,text='本地账号').pack(side='left')
+            self.account_box=ttk.Combobox(accounts,state='readonly',width=32)
+            self.account_box.pack(side='left',padx=8)
+            self.account_box.bind('<<ComboboxSelected>>',lambda _:self.guard(self.choose_profile))
+            ttk.Button(accounts,text='改名',command=lambda:self.guard(self.rename_profile)).pack(side='left')
+            ttk.Checkbutton(accounts,text='后台自动同步账号 / 关卡',variable=self.auto_sync).pack(side='left',padx=12)
+            self.account_status=tk.StringVar(value='正在显示本地保存的数据')
+            ttk.Label(accounts,textvariable=self.account_status,style='Hint.TLabel').pack(side='left')
+            self.refresh_profiles()
         sync_bar=ttk.Frame(root,padding=(18,0,18,8));sync_bar.pack(fill='x')
         self.live_button=ttk.Button(sync_bar,text='从已登录游戏同步',command=lambda:self.guard(self.sync_live))
         self.live_button.pack(side='left',padx=(0,8))
@@ -73,6 +100,95 @@ class MainlinePanel:
         self.query.trace_add('write',lambda *_:self.refresh())
         self.level.trace_add('write',lambda *_:self.refresh_cards())
         self.load_stage(); self.refresh()
+        self.restore_workspace(workspace)
+        self.save_workspace()
+        if self.profiles:self._sync_timer=root.after(1200,self.auto_sync_tick)
+
+    def busy(self):
+        return any(getattr(self,name,None) is not None and getattr(self,name).poll() is None
+                   for name in ('autoplay_process','combat_process','live_process'))
+
+    def refresh_profiles(self):
+        self.profile_keys=list(self.profiles.index['accounts'])
+        self.account_box['values']=[f'{self.profiles.label(key)} · Lv.{self.profiles.index["accounts"][key].get("level","?")} · {self.profiles.index["accounts"][key].get("stage_name","关卡未知")} · {key[-4:]}' for key in self.profile_keys]
+        if self.profiles.active in self.profile_keys:self.account_box.current(self.profile_keys.index(self.profiles.active))
+
+    def save_workspace(self):
+        if getattr(self,'profiles',None) and self.profiles.active and self.stage_data:
+            self.profiles.save_workspace(self.profiles.active,dict(stage_id=self.stage_data['stage']['ID'],
+                follow_game=self.follow_game.get(),placements=[dict(unit_id=v,x=k[0],y=k[1]) for k,v in self.placements.items()]))
+
+    def restore_workspace(self,value):
+        if value.get('stage_id')!=self.stage_data['stage']['ID']:return
+        board={}
+        try:
+            for pet in value.get('placements',[]):
+                board=move_unit(self.stage_data,self.pets,board,pet['unit_id'],(pet['x'],pet['y']))
+            self.placements=board
+        except (KeyError,ValueError):self.placements={}
+        self.refresh()
+
+    def switch_profile(self,key):
+        if key==self.profiles.active:return
+        value=load_roster(self.profiles.folder(key)/'roster.json',self.catalog)
+        workspace=self.profiles.workspace(key)
+        record=self.profiles.index['accounts'][key]
+        stage=workspace.get('stage_id',record.get('stage_id',1))
+        self.catalog.stage(stage)
+        self.save_workspace();self.profiles.activate(key)
+        self._profile_generation+=1
+        self.state=self.profiles.folder(key)/'roster.json'
+        self.read_error=False;self.pets=value['pets'];self.notes=value['notes'];self.level.set(str(value['shared_level']))
+        self.selected_id=None;self.follow_game.set(workspace.get('follow_game',True))
+        self.portrait.configure(image='',text='点击左侧塔塔图片');self.pet_title.set('');self.pet_subtitle.set('')
+        self.stage_query.set(str(stage));self.load_stage();self.restore_workspace(workspace)
+        self.refresh_profiles();self.account_status.set('当前：'+self.profiles.label(key))
+
+    def choose_profile(self):
+        if self.busy():
+            self.refresh_profiles()
+            raise ValueError('请先停止当前同步、搜索或自动推关，再切换账号')
+        key=self.profile_keys[self.account_box.current()]
+        try:self.switch_profile(key)
+        finally:self.refresh_profiles()
+        self.auto_sync.set(False)
+        self.status.set('已切换本地账号；后台自动同步已暂停，重新勾选后跟随已登录游戏。')
+
+    def rename_profile(self):
+        if not self.profiles.active:return
+        name=simpledialog.askstring('本地账号名称','给这个账号起个便于识别的名字：',initialvalue=self.profiles.label(self.profiles.active),parent=self.root)
+        if name:self.profiles.rename(self.profiles.active,name);self.refresh_profiles()
+
+    def auto_sync_tick(self):
+        try:
+            if self.auto_sync.get() and not self.busy():self.sync_live(background=True)
+        except Exception as exc:self.account_status.set('后台同步暂不可用：'+str(exc))
+        self._sync_timer=self.root.after(30000,self.auto_sync_tick)
+
+    def apply_sessions(self,sessions):
+        if any(getattr(self,name,None) is not None and getattr(self,name).poll() is None for name in ('autoplay_process','combat_process')):
+            self.account_status.set('任务运行中，账号与地图保持不变；结束后继续同步');return
+        updates={}
+        for capture in sessions:
+            key,changed=self.profiles.sync(capture,self.catalog);updates[key]=(capture,changed)
+        active=self.profiles.active
+        chosen=next(iter(updates)) if len(updates)==1 else active if active in updates else None
+        self.refresh_profiles()
+        if chosen is None:
+            self.account_status.set('检测到多个已登录账号，请从本地账号列表选择');return
+        capture,changed=updates[chosen]
+        if chosen != active:self.switch_profile(chosen)
+        elif changed:
+            value=load_roster(self.state,self.catalog)
+            self.pets=value['pets'];self.notes=value['notes'];self.read_error=False;self.level.set(str(value['shared_level']))
+            self.clear_board()
+        if self.follow_game.get() and self.stage_data['stage']['ID']!=capture['current_stage_id']:
+            self.stage_query.set(str(capture['current_stage_id']));self.load_stage()
+        self.stage_query.set(self.stage_data['stage']['DisplayName'])
+        self.save_workspace();self.refresh_profiles();self.refresh()
+        record=self.profiles.index['accounts'][chosen]
+        self.account_status.set(f'已同步：{self.profiles.label(chosen)} · 游戏关卡 {record["stage_name"]}')
+        self.status.set(f'已同步当前账号：共享 Lv.{capture["shared_level"]}，{len(capture["pets"])} 只塔塔；关卡 {record["stage_name"]}。')
 
     def style(self):
         s=ttk.Style(self.root); s.theme_use('clam')
@@ -84,6 +200,7 @@ class MainlinePanel:
         s.map('TButton',background=[('active','#5a4c78')])
         s.configure('Active.TButton',background='#486321',foreground='#efffc8')
         s.configure('TEntry',fieldbackground='#fcfbff',foreground='#201b35')
+        s.configure('TSpinbox',fieldbackground='#fcfbff',foreground='#201b35')
         s.configure('TCombobox',fieldbackground='#fcfbff',foreground='#201b35')
         s.map('TCombobox',fieldbackground=[('readonly','#fcfbff')],foreground=[('readonly','#201b35')])
         s.configure('TNotebook',background=BG,borderwidth=0)
@@ -233,12 +350,16 @@ class MainlinePanel:
     def persist(self,pets=None):
         if self.read_error: raise ValueError('原角色池读取失败，已禁止覆盖；请修正原文件或导入有效角色池')
         value=snapshot(self.pets if pets is None else pets,self.catalog,self.notes,shared_level=self.level.get())
+        if self.profiles and not self.profiles.active:
+            self.profiles.index['accounts']['unbound']=dict(label='本地角色池（未绑定账号）')
+            self.profiles.activate('unbound');self.state=self.profiles.folder('unbound')/'roster.json';self.refresh_profiles()
         if self.state.exists(): self.state.with_suffix('.previous.json').write_bytes(self.state.read_bytes())
         write_json(self.state,value); self.pets=value['pets']
         ids={p['unit_id'] for p in self.pets}; self.placements={k:v for k,v in self.placements.items() if v in ids}
         self.candidates=[]
         if hasattr(self,'candidate_box'): self.candidate_box['values']=[]; self.candidate_box.set('')
         self.refresh(); self.status.set(f'已保存：共享 Lv.{value["shared_level"]}，角色池 {len(self.pets)} 只')
+        self.save_workspace()
     def save_level(self): shared_level_value(self.level.get()); self.persist(); self.update_portrait()
     def save_pet(self):
         if self.selected_id is None: raise ValueError('请先点击一张塔塔卡片')
@@ -269,8 +390,9 @@ class MainlinePanel:
         toolbar=ttk.Frame(parent); toolbar.pack(fill='x',pady=(0,8)); self.stage_query=tk.StringVar(value=self.initial_stage)
         ttk.Label(toolbar,text='关卡').pack(side='left')
         entry=ttk.Entry(toolbar,textvariable=self.stage_query,width=12); entry.pack(side='left',padx=6)
-        entry.bind('<Return>',lambda _:self.guard(self.load_stage))
-        ttk.Button(toolbar,text='加载',command=lambda:self.guard(self.load_stage)).pack(side='left')
+        entry.bind('<Return>',lambda _:self.guard(self.load_manual_stage))
+        ttk.Button(toolbar,text='加载',command=lambda:self.guard(self.load_manual_stage)).pack(side='left')
+        ttk.Checkbutton(toolbar,text='跟随游戏',variable=self.follow_game,command=self.save_workspace).pack(side='left',padx=5)
         ttk.Button(toolbar,text='旧启发式候选',command=lambda:self.guard(self.plan)).pack(side='left',padx=6)
         self.candidate_box=ttk.Combobox(toolbar,state='readonly',width=18); self.candidate_box.pack(side='left')
         self.candidate_box.bind('<<ComboboxSelected>>',lambda _:self.choose_candidate(self.candidate_box.current()))
@@ -291,8 +413,12 @@ class MainlinePanel:
         ttk.Label(limits,text='每关时长（分钟）').pack(side='left')
         ttk.Combobox(limits,textvariable=self.search_minutes,values=('10','60','480','720','0'),width=7).pack(side='left',padx=(4,8))
         ttk.Label(limits,text='0 = 不限',style='Hint.TLabel').pack(side='left',padx=(0,12))
-        ttk.Checkbutton(limits,text='复核通过即结束',variable=self.stop_on_success).pack(side='left')
+        ttk.Checkbutton(limits,text='找到通过方案即结束',variable=self.stop_on_success).pack(side='left')
         ttk.Button(limits,text='继续已保存搜索',command=lambda:self.guard(self.resume_search)).pack(side='right')
+        review=ttk.Frame(parent);review.pack(fill='x',pady=(0,6))
+        ttk.Label(review,text='模拟复核').pack(side='left')
+        ttk.Combobox(review,textvariable=self.review_choice,values=tuple(LABELS.values()),state='readonly',width=24).pack(side='left',padx=(4,8))
+        ttk.Label(review,text='用于搜索和自动推关；轻量：搜索额外1次，开战前1次',style='Hint.TLabel').pack(side='left')
         learning=ttk.Frame(parent);learning.pack(fill='x',pady=(0,6))
         self.learning_status=tk.StringVar(value='搜索自动复用本机经验；玩家攻略是弱先验，按当前角色池重新模拟。')
         ttk.Label(learning,textvariable=self.learning_status,style='Hint.TLabel').pack(side='left')
@@ -301,6 +427,7 @@ class MainlinePanel:
         auto=ttk.Frame(parent);auto.pack(fill='x',pady=(0,6))
         self.autoplay_count=tk.StringVar(value='5')
         ttk.Button(auto,text='自动布阵并推关',command=lambda:self.guard(self.start_autoplay)).pack(side='left')
+        ttk.Button(auto,text='检查游戏布局',command=lambda:self.guard(self.calibrate_window)).pack(side='left',padx=6)
         ttk.Label(auto,text='最多推进').pack(side='left',padx=(10,4))
         ttk.Spinbox(auto,from_=1,to=100,textvariable=self.autoplay_count,width=4).pack(side='left')
         ttk.Label(auto,text='关；保持游戏前台，F8 随时停止',style='Hint.TLabel').pack(side='left',padx=6)
@@ -321,17 +448,23 @@ class MainlinePanel:
     def load_stage(self):
         query=self.stage_query.get().strip(); row=next((s for s in self.catalog.stages if s['name']==query),None)
         self.stage_data=self.catalog.stage(row['id'] if row else query); self.clear_board()
+        self.stage_query.set(self.stage_data['stage']['DisplayName'])
         reference=self.catalog.battle_resources.get(str(self.stage_data['battle'].get('ResID')),{}).get('BackgroundRes','')
         if not self.read_error:
             self.status.set('已载入原地图与关卡约束' if self.art.path(reference) else '关卡数据已载入；此章贴图未包含在本地资源中')
+        self.save_workspace()
+    def load_manual_stage(self):
+        self.load_stage();self.follow_game.set(False);self.save_workspace()
     def clear_board(self):
         self.replay_playing=False;self.replay_frame=None;self.current_report=None
         self.placements={}; self.candidates=[]; self.plan_mode='manual'
         self.candidate_box['values']=[]; self.candidate_box.set(''); self.refresh()
+        self.save_workspace()
     def place(self,uid,target):
         self.replay_playing=False;self.replay_frame=None;self.current_report=None
         self.placements=move_unit(self.stage_data,self.pets,self.placements,uid,target)
         self.plan_mode='manual'; self.refresh(); self.status.set('已调整布阵 · 未模拟战斗；可保存本地方案')
+        self.save_workspace()
     def begin_drag(self,uid):
         self.drag_id=uid; self.select_pet(uid)
         self.board.draw()
@@ -399,7 +532,7 @@ class MainlinePanel:
         args=[sys.executable,'-X','utf8',str(Path(__file__).with_name(script)),
               '--capture',str(job/'capture.json'),'--stage',str(self.stage_data['stage']['ID']),'--out',str(self.combat_output)]
         if search:
-            args+=['--budget',str(budget),'--seconds',str(seconds),'--stop-file',str(self.combat_stop),'--robust-orders']
+            args+=['--budget',str(budget),'--seconds',str(seconds),'--stop-file',str(self.combat_stop),'--review',self.review_mode()]
             if self.stop_on_success.get():args+=['--stop-on-success']
             if resume:args+=['--resume',str(resume)]
             if self.placements:
@@ -449,8 +582,11 @@ class MainlinePanel:
     def configured_limits(self):
         from job_status import search_limits
         limits=search_limits(self.search_budget.get(),self.search_minutes.get())
-        write_json(RUNTIME/'search-options.json',dict(candidates=self.search_budget.get(),minutes=self.search_minutes.get(),stop_on_success=self.stop_on_success.get()))
+        write_json(RUNTIME/'search-options.json',dict(candidates=self.search_budget.get(),minutes=self.search_minutes.get(),stop_on_success=self.stop_on_success.get(),review_mode=self.review_mode()))
         return limits
+
+    def review_mode(self):
+        return next(mode for mode,label in LABELS.items() if label==self.review_choice.get())
 
     def resume_search(self):
         try:last=json.loads((RUNTIME/'last-search.json').read_text(encoding='utf-8'));previous=Path(last['checkpoint'])
@@ -530,10 +666,9 @@ class MainlinePanel:
         self.status.set('已记玩家实战反馈：'+('通过' if won else '未通过')+'。将影响下次历史方案选择；不会冒充模拟校准。')
 
     def start_autoplay(self):
-        from autoplay import GEOMETRY,STOP
+        from autoplay import STOP
         if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:return
         if getattr(self,'combat_process',None) is not None and self.combat_process.poll() is None:raise ValueError('请等待当前本地模拟完成')
-        if not GEOMETRY.is_file():raise ValueError('尚无已验证的游戏窗口校准配置，请先完成自动布阵校准')
         count=int(self.autoplay_count.get());budget,seconds=self.configured_limits()
         if not 1<=count<=100:raise ValueError('关卡数应为1–100')
         STOP.unlink(missing_ok=True)
@@ -542,11 +677,30 @@ class MainlinePanel:
         self.last_job_dir=folder
         self.autoplay_log=(folder/'run.log').open('w',encoding='utf-8')
         args=[sys.executable,'-X','utf8',str(Path(__file__).with_name('autoplay.py')),'--stages',str(count),'--budget',str(budget),'--seconds',str(seconds),'--run-dir',str(folder)]
+        args+=['--review',self.review_mode()]
+        if self.profiles and self.profiles.active and self.profiles.active!='unbound':args+=['--account-key',self.profiles.active]
         if not self.stop_on_success.get():args+=['--optimize-until-limit']
         try:self.autoplay_process=subprocess.Popen(args,stdout=self.autoplay_log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         except Exception:self.autoplay_log.close();raise
         self.set_job_status(dict(event='initializing',completed=[]),autoplay=True)
         self.root.after(500,self.poll_autoplay)
+
+    def calibrate_window(self):
+        if any(getattr(self,name,None) is not None and getattr(self,name).poll() is None for name in ('autoplay_process','combat_process')):
+            raise ValueError('请先停止自动推关或搜索，再检查布局')
+        if getattr(self,'layout_process',None) is not None and self.layout_process.poll() is None:return
+        RUNTIME.mkdir(parents=True,exist_ok=True)
+        self.layout_log=(RUNTIME/'layout-check.log').open('w',encoding='utf-8')
+        self.layout_process=subprocess.Popen([sys.executable,'-X','utf8',str(Path(__file__).with_name('auto_layout.py'))],
+            stdout=self.layout_log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        self.status.set('正在只读识别当前游戏窗口和布局，不切换前台、不执行游戏输入…')
+        self.root.after(300,self.poll_layout)
+
+    def poll_layout(self):
+        if self.layout_process.poll() is None:self.root.after(300,self.poll_layout);return
+        self.layout_log.close()
+        detail=Path(self.layout_log.name).read_text(encoding='utf-8').strip()
+        self.status.set(detail.splitlines()[-1] if detail else '布局检查已结束')
 
     def stop_autoplay(self):
         from autoplay import STOP
@@ -554,6 +708,9 @@ class MainlinePanel:
         self.status.set('已发送停止请求；游戏战斗本身会继续结算，工具不再输入。')
 
     def close(self):
+        self.save_workspace()
+        if getattr(self,'_sync_timer',None):self.root.after_cancel(self._sync_timer)
+        if getattr(self,'live_process',None) is not None and self.live_process.poll() is None:self.live_process.terminate()
         if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:self.stop_autoplay()
         self.stop_search()
         self.replay_playing=False;self.root.destroy()
@@ -588,13 +745,14 @@ class MainlinePanel:
         if self.replay_index>=len(frames):self.replay_playing=False;return
         self.root.after(250,self.replay_tick)
 
-    def sync_live(self):
+    def sync_live(self,background=False):
         if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:raise ValueError('自动推关会逐关同步，请先停止再编辑角色池')
         if getattr(self,'live_process',None) is not None and self.live_process.poll() is None:return
         RUNTIME.mkdir(parents=True,exist_ok=True)
-        self.live_output=RUNTIME/'live-capture.json'
+        self.live_output=RUNTIME/('sessions.json' if self.profiles else 'live-capture.json')
+        self.live_generation=self._profile_generation
         self.live_log=(RUNTIME/'live-sync.log').open('w',encoding='utf-8')
-        args=[sys.executable,'-X','utf8',str(Path(__file__).with_name('live_roster.py')),
+        args=[sys.executable,'-X','utf8',str(Path(__file__).with_name('live_session.py' if self.profiles else 'live_roster.py')),
               '--data',str(self.catalog.data),'--dataset',str(self.catalog.dataset),'--out',str(self.live_output)]
         try:
             self.live_process=subprocess.Popen(args,stdout=self.live_log,stderr=subprocess.STDOUT,
@@ -602,7 +760,7 @@ class MainlinePanel:
         except Exception:
             self.live_log.close();raise
         self.live_button.configure(state='disabled')
-        self.status.set('正在只读获取当前微信塔塔角色池…')
+        if not background:self.status.set('正在后台只读获取账号、角色池与当前关卡…')
         self.root.after(300,self.poll_live)
 
     def apply_live_capture(self,capture):
@@ -623,8 +781,14 @@ class MainlinePanel:
         self.live_log.close();self.live_button.configure(state='normal')
         if self.live_process.returncode:
             detail=(RUNTIME/'live-sync.log').read_text(encoding='utf-8').strip()
-            self.status.set('同步失败，原角色池未修改：'+detail[-500:]);return
-        self.guard(lambda:self.apply_live_capture(json.loads(self.live_output.read_text(encoding='utf-8'))))
+            if self.profiles:self.account_status.set(detail[-300:])
+            self.status.set('同步暂不可用，保留本地账号与关卡：'+detail[-300:]);return
+        value=json.loads(self.live_output.read_text(encoding='utf-8'))
+        if self.profiles:
+            if self.live_generation!=self._profile_generation:return
+            try:self.apply_sessions(value['sessions'])
+            except Exception as exc:self.account_status.set('同步未应用：'+str(exc))
+        else:self.guard(lambda:self.apply_live_capture(value))
 
     def sync_art(self):
         from extract_cached_art import discover_tata_caches
@@ -652,9 +816,20 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data',type=Path,default=DATA); parser.add_argument('--dataset',type=Path,default=DATASET)
     parser.add_argument('--state',type=Path,default=RUNTIME/'roster.json')
-    parser.add_argument('--stage',default='1-1');parser.add_argument('--simulation',type=Path)
+    parser.add_argument('--stage');parser.add_argument('--simulation',type=Path)
     args=parser.parse_args(); root=tk.Tk()
     try:
+        if args.data == DATA and args.dataset == DATASET:
+            from resources import ensure_default_resources
+            root.title('Tata · 准备主线工作台')
+            preparing=ttk.Label(root,text='正在检查主线公共资源…',padding=30)
+            preparing.pack()
+            def progress(text):
+                preparing.configure(text=text)
+                root.update_idletasks()
+            root.update_idletasks()
+            ensure_default_resources(progress)
+            preparing.destroy()
         app=MainlinePanel(root,Catalog(args.data,args.dataset),args.state,args.stage)
         if args.simulation:app.load_simulation(args.simulation)
     except Exception as exc:

@@ -58,5 +58,28 @@ class LiveBattleTests(unittest.TestCase):
         live,_=self.fixture();live.refs['ed.StageModel']=live.refs['ed.StageBattleController']
         with self.assertRaisesRegex(LiveReadError,'失效'):live.snapshot()
 
+    def chapter_fixture(self,active=False,closed=False,duplicate=False):
+        f=Fixture()
+        def instance(name,**values):return f.table(dict(values,**{'class':f.table({'__cname':name})}))
+        model=instance('ed.StageModel',_stageID=579)
+        instance('ed.StageBattleController',stageID=578,battleID=578,battleMode=1,inBattle=active)
+        values=dict(stageModel=model,_lastPlayerStageID=579,_isStarted=True,isShow=False,
+                    isBaseViewClose=closed,isExiting=False,isCarMoving=False,isStartingBattle=False)
+        instance('ed.WorldMapView',**values)
+        if duplicate:instance('ed.WorldMapView',**values)
+        live=LiveBattle.__new__(LiveBattle);live.reader=None;live.heap=f.heap();live.refs=find_instances(bytes(f.data))
+        return live
+
+    def test_inactive_old_controller_does_not_hide_the_current_chapter_map(self):
+        state=self.chapter_fixture().snapshot()
+        self.assertEqual(state['screen'],'chapter')
+        self.assertEqual(state['chapter']['stage_id'],579)
+        self.assertNotIn('battle',state);self.assertNotIn('prepare',state)
+
+    def test_cached_map_cannot_bypass_active_or_ambiguous_controller_checks(self):
+        with self.assertRaisesRegex(LiveReadError,'控制器已切换'):self.chapter_fixture(active=True).snapshot()
+        with self.assertRaisesRegex(LiveReadError,'章节地图不唯一'):self.chapter_fixture(duplicate=True).snapshot()
+        self.assertEqual(self.chapter_fixture(closed=True).snapshot()['screen'],'inactive')
+
 
 if __name__=='__main__':unittest.main()
