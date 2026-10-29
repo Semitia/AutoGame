@@ -9,6 +9,9 @@ SOURCE = Path(__file__).resolve().parents[3]/'runtime/tata/research/decoded-0.50
 
 class CombatRuntime:
     def __init__(self, source=SOURCE):
+        if Path(source) == SOURCE:
+            from resources import ensure_default_resources
+            ensure_default_resources()
         self.source=Path(source)
         self.lua=LuaRuntime(register_eval=False,register_builtins=False,max_memory=512*1024**2)
         self.api=self.lua.execute(Path(__file__).with_name('headless.lua').read_text(encoding='utf-8'))

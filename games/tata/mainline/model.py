@@ -27,6 +27,9 @@ def write_json(path, value):
 
 class Catalog:
     def __init__(self, data=DATA, dataset=DATASET):
+        if Path(data) == DATA and Path(dataset) == DATASET:
+            from resources import ensure_default_resources
+            ensure_default_resources()
         self.data, self.dataset = Path(data), Path(dataset)
         def table(name):
             return read_json(self.data/'Config'/f'{name}.json')[name+'Table']

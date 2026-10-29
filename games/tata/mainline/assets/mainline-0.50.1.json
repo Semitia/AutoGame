@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "version": "0.50.1",
+  "files": 16608,
+  "unpacked_bytes": 267254544,
+  "sha256": "78e32ae06fbc3a8e9193b41203c33ebfecb727888fafa5b74d656a7a7dbf41d8",
+  "sources": [
+    {
+      "name": "tata-0.50.1.apk",
+      "url": "https://vda.lilithcdn.com/10090/2/0.50.1/com.lilithgame.pgame.android.cn/pgame_98fbe6189b7e11f18abe1211e0661fee.apk",
+      "sha256": "281b2645b9e00dfd4ff5b302eeaacc1301d3faa2cee9fb24b34655e559fc5f5e"
+    },
+    {
+      "name": "tata-overseas-0.31.11.xapk",
+      "url": "https://d.apkpure.net/b/XAPK/com.farlightgames.pgame.gp?versionCode=2321",
+      "sha256": "55d99255b0ac6eea36f3d6611625ba162be378649686b99ea20952e6f12ac345"
+    }
+  ]
+}

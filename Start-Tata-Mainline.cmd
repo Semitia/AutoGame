@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0"
-start "" pythonw run.py tata mainline %*
+python scripts\launch_tata_mainline.py %*
