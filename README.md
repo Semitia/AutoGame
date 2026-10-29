@@ -13,6 +13,8 @@
 
 ## 环境与启动
 
+**Tata 主线工作台：双击 `Start-Tata-Mainline.cmd`。** Python 3.10+ 环境下，首次自动安装依赖并从仓库自带资源包准备关卡、模拟引擎和基础图片；换电脑无需旧电脑文件。登录新账号后在面板同步角色池，详见[主线说明](games/tata/mainline/README.md)。
+
 **Tata 自动钓鱼：双击 `Start-Fishing.cmd` 打开启停面板。** 先在电脑微信里打开「塔塔冒险队 → 钓鱼大赛」；命令行入口为 `python run.py tata fishing`，详见 [Tata 说明](games/tata/README.md)。
 
 **推荐桌面入口：双击 `Start-GUI.cmd`。** 中文界面支持主线挑战和双人合作（34关直接在主线里选择），自动发现在线设备，提供四位置阵容编辑、配置方案自动缓存、启动/停止和日志。详见 [GUI 使用说明](docs/GUI.md)。
