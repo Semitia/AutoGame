@@ -22,6 +22,7 @@ class MainlinePanel:
         self.initial_stage=initial_stage;self.replay_frame=None;self.replay_index=0;self.replay_playing=False
         self.current_report=None;self.show_grid=tk.BooleanVar(value=False);self.search_budget=tk.StringVar(value='120')
         root.title('Tata · 图鉴与地图布阵'); root.configure(bg=BG)
+        root.protocol('WM_DELETE_WINDOW',self.close)
         width, height = min(1280,root.winfo_screenwidth()-70), min(820,root.winfo_screenheight()-100)
         root.geometry(f'{width}x{height}'); root.minsize(min(1050,width),min(660,height))
         self.level = tk.StringVar(value='1'); self.query = tk.StringVar()
@@ -279,6 +280,13 @@ class MainlinePanel:
         ttk.Label(learning,textvariable=self.learning_status,style='Hint.TLabel').pack(side='left')
         ttk.Button(learning,text='记实战未通过',command=lambda:self.guard(lambda:self.record_battle_feedback(False))).pack(side='right')
         ttk.Button(learning,text='记实战通过',command=lambda:self.guard(lambda:self.record_battle_feedback(True))).pack(side='right',padx=6)
+        auto=ttk.Frame(parent);auto.pack(fill='x',pady=(0,6))
+        self.autoplay_count=tk.StringVar(value='5')
+        ttk.Button(auto,text='自动布阵并推关',command=lambda:self.guard(self.start_autoplay)).pack(side='left')
+        ttk.Label(auto,text='最多推进').pack(side='left',padx=(10,4))
+        ttk.Spinbox(auto,from_=1,to=100,textvariable=self.autoplay_count,width=4).pack(side='left')
+        ttk.Label(auto,text='关；保持游戏前台，F8 随时停止',style='Hint.TLabel').pack(side='left',padx=6)
+        ttk.Button(auto,text='停止自动推关',command=self.stop_autoplay).pack(side='right')
         content=ttk.Frame(parent); content.pack(fill='both',expand=True)
         left=ttk.Frame(content); left.pack(side='left',fill='both',expand=True,padx=(0,10)); self.filters(left)
         ttk.Label(left,text='拖卡片上阵 · 地图内拖动交换位置 · 拖回卡片区下阵',foreground=ACCENT).pack(anchor='w',pady=8)
@@ -345,6 +353,7 @@ class MainlinePanel:
             self.status.set('已保存布阵：'+path)
 
     def run_local(self,search):
+        if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:raise ValueError('请先停止自动推关')
         if getattr(self,'combat_process',None) is not None and self.combat_process.poll() is None:return
         if not search and not self.placements:raise ValueError('请先摆放阵容')
         budget=int(self.search_budget.get())
@@ -442,6 +451,48 @@ class MainlinePanel:
         finally:memory.close()
         self.status.set('已记玩家实战反馈：'+('通过' if won else '未通过')+'。将影响下次历史方案选择；不会冒充模拟校准。')
 
+    def start_autoplay(self):
+        from autoplay import GEOMETRY,STOP
+        if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:return
+        if getattr(self,'combat_process',None) is not None and self.combat_process.poll() is None:raise ValueError('请等待当前本地模拟完成')
+        if not GEOMETRY.is_file():raise ValueError('尚无已验证的游戏窗口校准配置，请先完成自动布阵校准')
+        count=int(self.autoplay_count.get());budget=int(self.search_budget.get())
+        if not 1<=count<=100 or not 4<=budget<=10000:raise ValueError('关卡数1–100，搜索预算4–10000')
+        STOP.unlink(missing_ok=True)
+        folder=RUNTIME/'autoplay-ui'/uuid.uuid4().hex;folder.mkdir(parents=True,exist_ok=True)
+        self.autoplay_run_dir=folder
+        self.autoplay_log=(folder/'run.log').open('w',encoding='utf-8')
+        args=[sys.executable,'-X','utf8',str(Path(__file__).with_name('autoplay.py')),'--stages',str(count),'--budget',str(budget),'--run-dir',str(folder)]
+        try:self.autoplay_process=subprocess.Popen(args,stdout=self.autoplay_log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        except Exception:self.autoplay_log.close();raise
+        self.status.set('正在同步、模拟并自动布阵；运行时不要操作游戏，F8或点停止可结束。')
+        self.root.after(500,self.poll_autoplay)
+
+    def stop_autoplay(self):
+        from autoplay import STOP
+        STOP.parent.mkdir(parents=True,exist_ok=True);STOP.write_text('用户停止\n',encoding='utf-8')
+        self.status.set('已发送停止请求；游戏战斗本身会继续结算，工具不再输入。')
+
+    def close(self):
+        if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:self.stop_autoplay()
+        self.replay_playing=False;self.root.destroy()
+
+    def poll_autoplay(self):
+        path=RUNTIME/'autoplay-status.json'
+        if path.is_file():
+            try:
+                state=json.loads(path.read_text(encoding='utf-8'))
+                if state.get('run_dir')==str(self.autoplay_run_dir):
+                    label={'planning':'同步后复核阵容','searching':'搜索阵容','deploy':'自动布阵',
+                        'deployment_verified':'整队核验通过','request_order_verified':'入场顺序复核通过','battle_started':'实战中','battle_settled':'实战已结算',
+                        'preparation_ready':'下一关布阵就绪','stage_advanced':'已进入下一关','finished':'本次完成','stopped':'已停止'}
+                    self.status.set(f'自动推关 · 已通过 {len(state.get("completed",[]))} 关 · {label.get(state.get("event"),state.get("event",""))} · {state.get("reason","")}')
+            except (ValueError,OSError):pass
+        if self.autoplay_process.poll() is None:self.root.after(500,self.poll_autoplay)
+        else:
+            self.autoplay_log.close()
+            if self.autoplay_process.returncode:self.status.set('自动推关已停止，查看日志：'+self.autoplay_log.name)
+
     def toggle_replay(self):
         if not self.current_report or not self.current_report['evaluation'].get('frames'):raise ValueError('请先模拟或打开带回放的方案')
         plan={(p['x'],p['y']):p['unit_id'] for p in self.current_report['placements']}
@@ -458,6 +509,7 @@ class MainlinePanel:
         self.root.after(250,self.replay_tick)
 
     def sync_live(self):
+        if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:raise ValueError('自动推关会逐关同步，请先停止再编辑角色池')
         if getattr(self,'live_process',None) is not None and self.live_process.poll() is None:return
         RUNTIME.mkdir(parents=True,exist_ok=True)
         self.live_output=RUNTIME/'live-capture.json'

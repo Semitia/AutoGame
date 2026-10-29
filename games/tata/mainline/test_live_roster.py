@@ -49,6 +49,17 @@ def capture():
 
 
 class LiveRosterTests(unittest.TestCase):
+    def test_owned_model_before_encyclopedia_adds_isget_flag(self):
+        f=Fixture();root=f.model();heap=f.heap()
+        pet=heap.table(heap.table(heap.table(root)['pets'])[1])
+        ref=heap.table(heap.table(root)['pets'])[1]
+        header=f.data[ref.address:ref.address+32];node=struct.unpack_from('<I',header,16)[0]
+        for i in range(1<<header[7]):
+            offset=node+i*24
+            if heap.value(f.data,offset+16,f.data[offset+9])=='isGet':f.data[offset+8]=0
+        self.assertNotIn('isGet',heap.table(ref))
+        self.assertTrue(extract_model(heap,root)['pets'][0]['isGet'])
+
     def test_discovery_uses_structure_and_class_not_fixed_offsets(self):
         f=Fixture();f.alloc(1232);root=f.model()
         self.assertEqual(find_pet_models(bytes(f.data)),[root])

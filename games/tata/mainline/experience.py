@@ -17,7 +17,13 @@ def stable_hash(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
 
-def plan_key(plan):return stable_hash(sorted((p['unit_id'],p['x'],p['y']) for p in plan))
+def formation_key(plan):return stable_hash(sorted((p['unit_id'],p['x'],p['y']) for p in plan))
+
+
+def plan_key(plan):
+    # Creation order changes RNG consumption and target tie breaking. A versioned
+    # key keeps old unordered cache entries from impersonating ordered results.
+    return stable_hash(dict(version='ordered-v1',units=[(p['unit_id'],p['x'],p['y']) for p in plan]))
 
 
 def context_for(sim,stage,tactics):
@@ -105,8 +111,8 @@ class Experience:
     def retrieve(self,engine,context,limit=4):
         rows=self.db.execute('SELECT id,context,plan,outcome,plan_hash,context_hash FROM battles WHERE engine=? ORDER BY won DESC,score DESC LIMIT 600',(engine,)).fetchall()
         feedback={}
-        for ch,ph,won in self.db.execute('SELECT context_hash,plan_hash,won FROM feedback WHERE engine=? ORDER BY id',(engine,)):
-            feedback[(ch,ph)]=bool(won)
+        for ch,ph,won,source in self.db.execute('SELECT context_hash,plan_hash,won,source FROM feedback WHERE engine=? ORDER BY id',(engine,)):
+            feedback[(ch,ph)]=(bool(won),source)
         candidates=[];seen=set()
         for identifier,raw,plan,outcome,ph,ch in rows:
             past=json.loads(raw);outcome=json.loads(outcome);profile=past['profile'];current=context['profile']
@@ -118,11 +124,14 @@ class Experience:
             if similarity<.25:continue
             exact=past['stage_hash']==context['stage_hash']
             geometry=profile['xs']==current['xs'] and profile['ys']==current['ys']
-            user_result=feedback.get((ch,ph)) if past['roster_hash']==context['roster_hash'] else None
-            priority=2*exact+.5*geometry+similarity+.3*outcome['won']+(.15 if user_result is True else -.5 if user_result is False else 0)
-            candidates.append((priority,identifier,ph,dict(placements=json.loads(plan),stage_id=past['stage_id'],
+            parsed_plan=json.loads(plan);ordered_key=plan_key(parsed_plan)
+            evidence=feedback.get((ch,formation_key(parsed_plan))) if past['roster_hash']==context['roster_hash'] else None
+            live_result,feedback_source=evidence if evidence else (None,None)
+            priority=2*exact+.5*geometry+similarity+.3*outcome['won']+(.15 if live_result is True else -.5 if live_result is False else 0)
+            candidates.append((priority,identifier,ordered_key,dict(placements=parsed_plan,stage_id=past['stage_id'],
                 similarity=round(similarity,3),same_roster=past['roster_hash']==context['roster_hash'],
-                exact_stage=exact,source='simulation',user_report=user_result,evidence_id=identifier)))
+                exact_stage=exact,source='simulation',user_report=live_result if feedback_source=='user_report' else None,
+                live_observation=live_result if feedback_source=='live_observation' else None,evidence_id=identifier)))
         selected=[]
         for _,_,ph,candidate in sorted(candidates,key=lambda x:(x[0],x[1]),reverse=True):
             if ph in seen:continue
@@ -130,13 +139,15 @@ class Experience:
             if len(selected)>=limit:break
         return selected
 
-    def record_feedback(self,engine,context_hash,placements,won,note=''):
+    def record_feedback(self,engine,context_hash,placements,won,note='',source='user_report'):
         if type(won) is not bool:raise ValueError('实战结果必须为通过/未通过')
+        if source not in ('user_report','live_observation'):raise ValueError('未知实战证据来源')
         with self.db:
             self.db.execute('INSERT INTO feedback(engine,context_hash,plan_hash,won,source,note,created_at) VALUES (?,?,?,?,?,?,?)',
-                (engine,context_hash,plan_key(placements),int(won),'user_report',str(note)[:2000],datetime.now(timezone.utc).isoformat()))
+                (engine,context_hash,formation_key(placements),int(won),source,str(note)[:2000],datetime.now(timezone.utc).isoformat()))
 
     def stats(self,engine):
         n,w=self.db.execute('SELECT COUNT(*),COALESCE(SUM(won),0) FROM battles WHERE engine=?',(engine,)).fetchone()
         return dict(battles=n,simulated_victories=w,preference_updates=self.weights(engine)[1],
-            user_reports=self.db.execute('SELECT COUNT(*) FROM feedback WHERE engine=?',(engine,)).fetchone()[0])
+            user_reports=self.db.execute("SELECT COUNT(*) FROM feedback WHERE engine=? AND source='user_report'",(engine,)).fetchone()[0],
+            live_observations=self.db.execute("SELECT COUNT(*) FROM feedback WHERE engine=? AND source='live_observation'",(engine,)).fetchone()[0])

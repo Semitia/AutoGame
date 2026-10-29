@@ -150,11 +150,15 @@ def extract_model(heap, ref):
         pet = heap.table(ref)
         if type(tid) is not int or pet.get('tid') != tid or pet.get('level') != result['shared_level']:
             raise LiveReadError('角色编号或共享等级校验失败')
-        if type(pet.get('isGet')) is not bool:
+        # PetModel.pets contains owned pets (InitData/AddPet/GetAllPets). isGet is
+        # only attached when GetAllPetsAndUnGet builds the encyclopedia cache.
+        # Fresh logins may therefore lack it; never infer ownership from star level.
+        if 'isGet' in pet and type(pet['isGet']) is not bool:
             raise LiveReadError('无法确认角色是否已拥有')
-        if not pet['isGet']:
+        if pet.get('isGet') is False:
             continue
         row = {k: pet[k] for k in PET_FIELDS if k in pet}
+        row['isGet']=True
         feed = heap.table(pet.get('feedData'))
         if feed.get('petTid') != tid:
             raise LiveReadError('角色喂养数据归属校验失败')

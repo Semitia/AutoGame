@@ -120,5 +120,24 @@ class LearningTests(unittest.TestCase):
         self.sim.rows[1]['captured_at']='new timestamp'
         self.assertEqual(context_for(self.sim,self.stage,self.tactics)['roster_hash'],self.context['roster_hash'])
 
+    def test_observed_results_are_not_relabelled_as_player_reports(self):
+        self.record(0,10)
+        self.memory.record_feedback('engine-A',stable_hash(self.context),self.plans[0],True,source='live_observation')
+        item=self.memory.retrieve('engine-A',self.context)[0]
+        self.assertIsNone(item['user_report']);self.assertIs(item['live_observation'],True)
+        stats=self.memory.stats('engine-A')
+        self.assertEqual(stats['live_observations'],1);self.assertEqual(stats['user_reports'],0)
+        self.assertEqual(stats['preference_updates'],0)
+
+    def test_battle_cache_distinguishes_input_order_of_same_formation(self):
+        from experience import plan_key,formation_key
+        first=self.plans[0];second=list(reversed(first))
+        self.assertNotEqual(plan_key(first),plan_key(second))
+        self.assertEqual(formation_key(first),formation_key(second))
+        a=self.memory.record('engine-A',self.context,first,{},outcome(3))
+        b=self.memory.record('engine-A',self.context,second,{},outcome(10))
+        self.assertNotEqual(a,b)
+        self.assertEqual(self.memory.stats('engine-A')['battles'],2)
+
 
 if __name__=='__main__':unittest.main()
