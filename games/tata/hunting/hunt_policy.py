@@ -11,6 +11,16 @@ class Options:
     rounds:int=10
     seconds:float=3600
     reserve:int=0
+    test_fish:bool=False
+
+    @property
+    def hunt_multiplier(self):return 2 if self.test_fish else 200
+
+    @property
+    def target_tid(self):return 2002 if self.test_fish else TARGET_TID
+
+    @property
+    def target_name(self):return '鱼怪臭臭' if self.test_fish else '萨满臭臭'
 
     def validate(self):
         import math
@@ -34,20 +44,22 @@ class Policy:
         if s['screen'] not in ('room','lobby','reward','transition'):raise ValueError('当前不是已确认的围猎界面')
         if s['screen']=='transition':return dict(kind='wait',reason='等待围猎界面就绪')
         if self.mode is None:
-            self.mode='hunt' if s['locks']>=self.options.stock or (s.get('multiplier')==200 and (s['locks']>0 or s.get('lock_active'))) else 'farm'
+            self.mode='hunt' if self.options.test_fish or s['locks']>=self.options.stock or (s.get('multiplier')==self.options.hunt_multiplier and (s['locks']>0 or s.get('lock_active'))) else 'farm'
         if s['screen']=='reward':raise ValueError('启动时存在奖励页，请先关闭后再运行围猎')
         if self.target is not None:
-            if s['screen']!='room':raise ValueError('跟踪萨满时房间上下文改变，停止')
+            if s['screen']!='room':raise ValueError('跟踪目标时房间上下文改变，停止')
             alive=next((e for e in s['enemies'] if token(e)==self.target and e['active']),None)
             if alive is None:return dict(kind='exit',reason='目标已死亡或离场，立即退出以防自动换靶',completed=True)
             if s['bullets']<=self.options.reserve+s['multiplier']:
                 return dict(kind='exit',reason='锁定期间达到金猎币保留数量',finish=True)
             if not s['lock_active']:return dict(kind='exit',reason='锁定效果已结束，退出等待下一轮')
             if s['lock_target']!=self.target[0]:return dict(kind='exit',reason='锁定已切换到其他目标，立即退出')
-            return dict(kind='wait',reason='锁定萨满中；按唯一编号跟踪，不看头像是否显示')
+            return dict(kind='wait',reason=f'锁定{self.options.target_name}中；按唯一编号跟踪，不看头像是否显示')
+        if self.options.test_fish and s['locks']<=0 and not self.pending and not s.get('lock_active'):
+            raise ValueError('鱼怪测试需要锁定道具，不自动刷道具')
         if self.mode=='farm' and s['locks']>=self.options.stock:self.mode='hunt'
         if self.mode=='hunt' and s['locks']<=0 and not self.pending and not s.get('lock_active'):self.mode='farm'
-        desired=200 if self.mode=='hunt' else self.options.low_multiplier
+        desired=self.options.hunt_multiplier if self.mode=='hunt' else self.options.low_multiplier
         room=room_for(desired)
         if s['screen']=='lobby':
             if s['switching']:return dict(kind='wait',reason='等待场地切换完成')
@@ -65,19 +77,19 @@ class Policy:
             if s['lock_active']:return dict(kind='exit',reason='低倍场存在已有锁定，先退出重置')
             if self.options.use_rage and s['rage']>0 and not s['rage_active']:return dict(kind='rage')
             return dict(kind='fire')
-        candidates=[e for e in s['enemies'] if e['tid']==TARGET_TID and e['active']]
+        candidates=[e for e in s['enemies'] if e['tid']==self.options.target_tid and e['active']]
         if s['lock_active']:
             actual=next((e for e in candidates if e['id']==s['lock_target']),None)
             if actual is None:return dict(kind='exit',reason='锁定了其他臭臭，退出节省子弹')
             self.target=token(actual);self.pending=False
-            return dict(kind='wait',reason='已确认实际锁定萨满臭臭')
+            return dict(kind='wait',reason=f'已确认实际锁定{self.options.target_name}')
         if self.pending:
-            if not candidates:return dict(kind='exit',reason='锁定回读前萨满已离场',completed=True)
+            if not candidates:return dict(kind='exit',reason='锁定回读前目标已离场',completed=True)
             return dict(kind='wait',reason='等待锁定生效；不重复消耗道具')
         if candidates:
             highest=max(e['score'] for e in s['enemies'] if e['active'])
             if any(e['score']==highest for e in candidates):return dict(kind='lock')
-        return dict(kind='wait',reason='200倍场等待萨满，不发射、不使用狂暴')
+        return dict(kind='wait',reason=f'{desired}倍场等待{self.options.target_name}，不发射、不使用狂暴')
 
     def exited(self,decision):
         if decision.get('completed'):self.completed+=1

@@ -21,6 +21,21 @@ def lobby(locks=10):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_fish_acceptance_uses_two_times_room_and_actual_game_target_priority(self):
+        p=Policy(Options(test_fish=True));s=lobby(locks=1)
+        self.assertEqual(p.decide(s)['kind'],'next')
+        s['selected_dungeon']=2
+        self.assertEqual(p.decide(s),dict(kind='enter',dungeon=2))
+        fish=enemy(tid=2002,score=150)
+        self.assertEqual(p.decide(room(2,1,enemies=[fish]))['kind'],'lock')
+        self.assertEqual(p.decide(room(2,1,enemies=[fish,enemy(id=88)]))['kind'],'wait')
+        s=room(2,1,enemies=[fish],locked=True)
+        self.assertEqual(p.decide(s)['kind'],'wait')
+        s['enemies']=[]
+        self.assertTrue(p.decide(s)['completed'])
+        with self.assertRaisesRegex(ValueError,'不自动刷道具'):
+            Policy(Options(test_fish=True)).decide(room(2,0))
+
     def test_low_room_uses_rage_and_fires_without_spending_locks(self):
         p=Policy(Options());state=room(1,locks=0)
         self.assertEqual(p.decide(state)['kind'],'rage')

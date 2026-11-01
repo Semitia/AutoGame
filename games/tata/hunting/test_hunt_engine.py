@@ -25,6 +25,22 @@ class Controls:
 
 
 class EngineTests(unittest.TestCase):
+    def test_navigation_wait_reads_live_selection_without_rescanning_heap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner,current,controls,_=self.driver(lobby(),Path(directory))
+            runner.layout.navigation=lambda *args:(30,30)
+            runner.last_refresh=0
+            runner.live.refresh=Mock(side_effect=AssertionError('navigation must not scan the heap'))
+            original=runner.live.snapshot;reads=[0]
+            def snapshot():
+                reads[0]+=1
+                if reads[0]>=3:current[0]['selected_dungeon']=2
+                return original()
+            runner.live.snapshot=snapshot
+            runner.lobby_action(copy.deepcopy(current[0]),dict(kind='next'))
+            runner.live.refresh.assert_not_called()
+            self.assertEqual(controls.clicks,[(30,30)])
+
     def driver(self,state,folder):
         current=[state];controls=Controls();events=[]
         live=SimpleNamespace(snapshot=lambda:copy.deepcopy(current[0]),refresh=lambda:None)

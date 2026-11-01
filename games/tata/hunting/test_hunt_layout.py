@@ -36,3 +36,9 @@ class LayoutTests(unittest.TestCase):
         self.assertAlmostEqual(self.layout.start(image)[0],340,delta=2)
         draw.polygon([(535,650),(570,680),(535,710)],fill='white')
         with self.assertRaises(LayoutError):self.layout.navigation(image,'next')
+
+    def test_chevron_navigation_rejects_irregular_bright_artwork(self):
+        image=Image.new('RGB',(600,1200),'#28223c');draw=ImageDraw.Draw(image)
+        draw.polygon([(100,680),(70,710),(100,740),(112,728),(94,710),(112,692)],fill='white')
+        draw.polygon([(80,450),(68,451),(59,464),(57,485),(63,497),(64,469)],fill='white')
+        self.assertAlmostEqual(self.layout.navigation(image,'previous')[1],710,delta=2)

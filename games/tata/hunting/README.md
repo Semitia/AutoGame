@@ -37,6 +37,10 @@ python run.py tata hunting --panel
 # 用户主动启动自动操作；先打开围猎选场页或房间并保持前台
 python run.py tata hunting --run --activate --stock 10 --low 1 --rounds 10 --seconds 3600
 
+# 验收替代目标：2倍场鱼怪臭臭（2002），不手动射击、不用狂暴、不自动刷道具
+# 鱼怪必须是当前原游戏最高分目标，才会使用锁定；测试后去掉此参数恢复200倍萨满
+python run.py tata hunting --run --test-fish --rounds 1 --seconds 180 --reserve 90000
+
 # 离线原字节码与合成状态/原图回归
 python games/tata/hunting/verify_logic.py
 python -m unittest discover -s games/tata/hunting -p "test_*.py" -v
@@ -44,6 +48,9 @@ python -m unittest discover -s games/tata/hunting -p "test_*.py" -v
 
 独立自动CLI运行前可清理上次 `runtime/tata/hunting/STOP`；面板启动会清理旧标记。临时日志、观察状态和布局失败证据留在 `runtime/tata/hunting/runs/<编号>/`，账号仅保存UID哈希，不导出原UID、昵称、令牌或完整内存。原APK资源提取的3张按钮图片与最小公共规则位于 `assets/`；没有玩家截图。
 
-2026-11-01：模块、原字节码依赖、完整合成循环和多比例原图识别已做离线验证；用户给的截图上已识别退出、狂暴与射击区域，锁定倒计时状态不会被当作可再次使用的按钮。没有运行实机自动操作，也尚未验证真实电脑的选场箭头和新界面生命周期；识别不足会停止并保留 `last-layout.png` / `last-observation.json`，不会试点旧坐标。
+2026-11-01实机验收（全部使用CLI，未使用Computer Use）：
 
-同日后台只读检查未找到已登录的围猎会话（0个），没有据此认定当前游戏客户端的读取或自动操作已通过。打开实际围猎后可先点“后台只读检查”核实模型。
+- 先按用户要求以2倍场鱼怪（2002）替代测试：成功翻页、入场，只消耗1个锁定，回读实际目标1847并跟踪同次生成；目标死亡或离场后约61ms发出退出点击，确认返回选场页。金猎币98,375→98,349，狂暴未用。证据：`runtime/tata/hunting/runs/acceptance-fish3-20261101/`。
+- 再恢复200倍萨满（2008）：实际锁定目标6092并跟踪同次生成，只消耗1个锁定；目标死亡或离场后约55ms发出退出点击，确认返回选场页。金猎币98,349→94,949，狂暴未用。证据：`runtime/tata/hunting/runs/acceptance-high-complete-20261101/`。退出后的选场页回读约11秒，包含对象扫描耗时，不等于游戏退出动画时长。
+- 修复实机发现的问题：选场列表按原 `TrapMainView.GetDungeonList` 从绑定的 `TrapModel` 读取；翻页箭头用轮廓排除背景美术；翻页等待直接读当前对象，不因整块内存扫描耗尽超时；怪物池回收导致编号清零/复用时最多重读完整状态3次；移除已关闭或已回收的旧界面引用，活动界面缺失时释放鼠标并重新定位；显式激活支持Windows原生任务切换兜底。
+- 两次目标结束均没有出现奖励弹窗，未认定击杀归自己。低倍持续射击/狂暴补锁定、真实奖励弹窗、长期循环和收益仍待实测；35项离线回归通过。识别不足时停止并保留本地证据，不复用旧坐标。

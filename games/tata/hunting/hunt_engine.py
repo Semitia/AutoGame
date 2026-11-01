@@ -11,7 +11,7 @@ class Runner:
         self.options=options.validate();self.policy=Policy(options)
         self.live=live;self.input=controls;self.layout=layout;self.emit=emit
         self.stop_path=Path(stop_path or RUNTIME/'STOP');self.cached=None
-        self.room_token=None;self.last_refresh=0.;self.pending_since=None;self.stopping=False
+        self.room_token=None;self.last_refresh=time.monotonic();self.pending_since=None;self.stopping=False
         self.evidence_dir=Path(evidence_dir) if evidence_dir else None;self.last_observation=None
 
     def check(self,allow_stop=False):
@@ -23,7 +23,7 @@ class Runner:
         self.last_observation=self.live.snapshot()
         return self.last_observation
 
-    def wait(self,predicate,seconds=12,allow_stop=False):
+    def wait(self,predicate,seconds=12,allow_stop=False,refresh=True):
         end=time.monotonic()+seconds;error=None
         while time.monotonic()<end:
             self.check(allow_stop)
@@ -31,7 +31,7 @@ class Runner:
                 state=self.snapshot()
                 if predicate(state):return state
             except LiveReadError as exc:error=exc
-            if time.monotonic()-self.last_refresh>.4:
+            if refresh and time.monotonic()-self.last_refresh>.4:
                 self.live.refresh();self.last_refresh=time.monotonic()
             time.sleep(.02)
         raise RuntimeError('围猎状态等待超时'+('：'+str(error) if error else ''))
@@ -110,7 +110,7 @@ class Runner:
         if kind=='enter':
             current=self.wait(lambda s:s['screen']=='room' and s['room_token'][2]==action['dungeon'],20)
             self.room_controls(current)
-        else:self.wait(lambda s:s['screen']=='lobby' and not s['switching'] and s['selected_dungeon']!=state['selected_dungeon'],5)
+        else:self.wait(lambda s:s['screen']=='lobby' and not s['switching'] and s['selected_dungeon']!=state['selected_dungeon'],5,refresh=False)
 
     def run(self):
         end=time.monotonic()+self.options.seconds;previous=None;last_metrics=0.
@@ -118,11 +118,16 @@ class Runner:
             self.wait(lambda s:s['screen'] in ('room','lobby','reward'),20)
             while time.monotonic()<end:
                 self.check();s=self.snapshot()
+                if s['screen']=='transition':
+                    self.input.release()
+                    self.wait(lambda current:current['screen'] in ('room','lobby','reward'),20)
+                    continue
                 if s['screen']=='room':self.room_controls(s)
                 action=self.policy.decide(s);kind=action['kind']
                 if kind!=previous or time.monotonic()-last_metrics>1:
                     self.emit('state',phase=kind,reason=action.get('reason',''),completed=self.policy.completed,
-                        locks=s['locks'],rage=s['rage'],bullets=s['bullets'],multiplier=s.get('multiplier'))
+                        locks=s['locks'],rage=s['rage'],bullets=s['bullets'],multiplier=s.get('multiplier'),
+                        lock_active=s.get('lock_active',False),lock_target=s.get('lock_target'),target=self.policy.target)
                     previous=kind;last_metrics=time.monotonic()
                 if kind=='finish':break
                 if kind in ('enter','next','previous'):self.lobby_action(s,action)

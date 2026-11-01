@@ -47,7 +47,7 @@ class HuntPanel:
         self.start_button=ttk.Button(bar,text='开始围猎',command=self.start);self.start_button.pack(side='left',padx=(0,10))
         self.stop_button=ttk.Button(bar,text='停止并退出围猎',command=self.stop,state='disabled');self.stop_button.pack(side='left',padx=(0,10))
         self.observe_button=ttk.Button(bar,text='后台只读检查',command=lambda:self.start(True));self.observe_button.pack(side='left')
-        self.status=tk.StringVar(master=root,value='请先打开围猎选场页或围猎房间。此版本尚未进行实机自动操作验收。')
+        self.status=tk.StringVar(master=root,value='请先打开围猎选场页或围猎房间，运行时保持游戏前台。F8立即停止输入。')
         ttk.Label(box,textvariable=self.status,wraplength=900).pack(anchor='w',pady=(16,8))
         self.metrics=tk.StringVar(master=root,value='锁定 —    狂暴 —    金猎币 —    已完成 0 轮')
         ttk.Label(box,textvariable=self.metrics).pack(anchor='w',pady=(0,10))

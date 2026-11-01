@@ -59,6 +59,8 @@ class Layout:
         keep=np.zeros_like(mask);keep[int(h*.22):int(h*.76),:int(w*.24)]=255
         keep[int(h*.22):int(h*.76),int(w*.76):]=255;mask&=keep
         found=[]
+        triangle=np.array([(0,30),(35,0),(35,60)],dtype=np.int32).reshape(-1,1,2)
+        chevron=np.array([(30,0),(0,30),(30,60),(42,48),(24,30),(42,12)],dtype=np.int32).reshape(-1,1,2)
         for contour in cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)[0]:
             x,y,rw,rh=cv2.boundingRect(contour)
             if not (.02*w<rw<.15*w and .018*h<rh<.10*h and .35<rw/rh<1.5):continue
@@ -68,6 +70,9 @@ class Layout:
             if left!=(x<w*.5):continue
             tip=p[np.argmin(p[:,0]) if left else np.argmax(p[:,0])]
             if abs(tip[1]-(y+rh/2))>rh*.25:continue
+            # Artwork in the lobby also contains bright contours. Require an
+            # arrow silhouette, including the actual rounded chevron button.
+            if min(cv2.matchShapes(contour,t,cv2.CONTOURS_MATCH_I1,0) for t in (triangle,chevron))>.18:continue
             found.append(((x+rw/2)/factor,(y+rh/2)/factor))
         if len(found)!=1:raise LayoutError('未识别到唯一的场地翻页箭头，不猜按钮位置')
         return found[0]

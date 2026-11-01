@@ -13,6 +13,9 @@ KEYS=tuple(x.encode() for x in ('_uid','backpackModel','_totalBulletGet','_roomI
     '_currentDungeonIndex','_holdShootAngle','_bossRewardOwners','_enemyActors','isShow'))
 
 
+class EnemyReadRace(LiveReadError):pass
+
+
 def present(heap,ref,key):
     """Test nil exactly like IsValid, without decoding or following Unity userdata."""
     header=heap.block(ref.address,32)
@@ -52,10 +55,20 @@ class HuntLive:
     def objects(self,name,view=False):
         output=[]
         for ref in dict.fromkeys(self.refs.get(name,[])):
-            t=self.heap.table(ref)
-            if self.heap.table(t.get('class')).get('__cname')!=name:raise LiveReadError('围猎对象已回收，请重新定位')
-            if t.get('_behavior_destructed') is True:continue
-            if view and (not open_view(t) or t.get('_isStarted') is not True):continue
+            try:
+                t=self.heap.table(ref)
+                if self.heap.table(t.get('class')).get('__cname')!=name:
+                    raise LiveReadError('围猎对象已回收，请重新定位')
+            except LiveReadError:
+                if not view:raise
+                # Closed lobby/reward views can be collected during a room.
+                # An invalid view cannot establish an active input context.
+                self.refs[name]=[r for r in self.refs[name] if r!=ref]
+                continue
+            if t.get('_behavior_destructed') is True or (view and not open_view(t)):
+                self.refs[name]=[r for r in self.refs[name] if r!=ref]
+                continue
+            if view and t.get('_isStarted') is not True:continue
             output.append((ref,t))
         return output
 
@@ -65,7 +78,15 @@ class HuntLive:
         return found[0][1]
 
     def snapshot(self):
-        with self.heap.cached():result=self._snapshot()
+        # The room can remove/reset a pooled enemy after its table reference
+        # was read. Retry the whole observation with a fresh cache, never skip
+        # an inconsistent enemy or reuse the previous observation for input.
+        for attempt in range(3):
+            try:
+                with self.heap.cached():result=self._snapshot()
+                break
+            except EnemyReadRace:
+                if attempt==2:raise
         # Fresh identity/room header; aliases cached above never confirm a later observation.
         player=self.one('ed.PlayerModel')
         if account_key(player.get('_uid'))!=result['account_key']:raise LiveReadError('读取中账号已切换')
@@ -120,8 +141,12 @@ class HuntLive:
             actors=h.table(scenes[0][1].get('_enemyActors'));units=h.table(room.get('_units'));enemies=[]
             for id,ref in units.items():
                 data=h.table(ref)
-                if (h.table(data.get('class')).get('__cname')!='ed.TrapBattleEnemyData'
-                    or data.get('_unitID')!=id or data.get('_unitTid') not in self.scores):raise LiveReadError('围猎敌人身份校验失败')
+                if h.table(data.get('class')).get('__cname')!='ed.TrapBattleEnemyData':
+                    raise LiveReadError('围猎敌人模型类型不匹配')
+                if data.get('_unitID')!=id:
+                    raise EnemyReadRace(f"围猎敌人身份校验失败：索引{id}，实例{data.get('_unitID')}，配置{data.get('_unitTid')}")
+                if data.get('_unitTid') not in self.scores:
+                    raise LiveReadError(f"围猎敌人身份校验失败：索引{id}，实例{data.get('_unitID')}，配置{data.get('_unitTid')}")
                 actor_ref=actors.get(id);active=False
                 if isinstance(actor_ref,TableRef):
                     actor=h.table(actor_ref)
@@ -133,7 +158,12 @@ class HuntLive:
                 multiplier=dungeon['multiplier'],lock_active=effect.get('lock') is True,
                 rage_active=effect.get('angry') is True,lock_target=own.get('_lockTargetID',0),enemies=enemies)
         elif lobby and room.get('_roomState',0)==0:
-            view=lobby[0][1];listing=h.table(view.get('_dungeonList'))
+            # TrapMainView.GetDungeonList delegates to its TrapModel. The
+            # view's own _dungeonList can be empty even on a ready lobby.
+            view=lobby[0][1]
+            if view.get('_model') not in self.refs.get('ed.TrapModel',[]):
+                raise LiveReadError('选场页绑定的围猎模型不匹配')
+            listing=h.table(trap.get('_dungeonList'))
             ids=[h.table(v).get('ID') for _,v in sorted(listing.items())]
             index=view.get('_currentDungeonIndex')
             if type(index) is not int or not 1<=index<=len(ids):raise LiveReadError('场地选择尚未就绪')

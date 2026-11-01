@@ -1,6 +1,7 @@
 """Read allowlists against a synthetic Lua ABI, including opaque native values."""
 import struct
 import unittest
+from unittest.mock import patch
 import hunt_paths
 from hunt_live import HuntLive,present,CLASSES,KEYS
 from live_battle import find_instances
@@ -15,7 +16,8 @@ def fixture(in_room=True):
     backpack=obj('ed.BackpackModel',_itemMapRaw=f.table({30:10,31:3}))
     inside=obj('ed.InsideModel',insideMap=f.table({110008001:f.table(dict(amount=99000))}))
     obj('ed.PlayerAssetModel',backpackModel=backpack,insideModel=inside)
-    obj('ed.TrapModel',_totalBulletGet=999999)
+    dungeons=f.table({i:f.table(dict(ID=i)) for i in range(1,11)})
+    trap=obj('ed.TrapModel',_totalBulletGet=999999,_dungeonList=dungeons)
     unit=obj('ed.TrapBattleEnemyData',_unitID=77,_unitTid=2008,_spawnTime=10,_exitTime=100)
     actor=obj('ed.TrapEnemyActor',enemyData=unit,isActive=True,node=f.table({}))
     obj('ed.TrapBattleScene',_enemyActors=f.table({77:actor}),sceneRoot=f.table({}))
@@ -23,7 +25,7 @@ def fixture(in_room=True):
     battle=obj('ed.TrapBattleModel',_roomID=1,_roomCreateTs=100,_dungeonID=8,_roomState=1 if in_room else 0,
         _connState=1,_units=f.table({77:unit}),_players=f.table({123:own}))
     obj('ed.TrapBattleView',_bossRewardOwners=f.table({}),_isStarted=True,isBaseViewClose=not in_room)
-    obj('ed.TrapMainView',_dungeonList=f.table({i:f.table(dict(ID=i)) for i in range(1,11)}),
+    obj('ed.TrapMainView',_model=trap,_dungeonList=f.table({}),
         _currentDungeonIndex=1,_isStarted=True,isBaseViewClose=in_room)
     live=HuntLive.__new__(HuntLive);live.reader=None;live.account=None;live.heap=f.heap()
     live.refs=find_instances(bytes(f.data),CLASSES,KEYS);live.scores={2008:1500}
@@ -40,6 +42,31 @@ def set_field(f,ref,key,value):
 
 
 class LiveTests(unittest.TestCase):
+    def test_collected_lobby_does_not_break_active_room_but_missing_room_never_allows_input(self):
+        live,f,_=fixture();ref=live.refs['ed.TrapMainView'][0]
+        f.data[ref.address+4]=0
+        self.assertEqual(live.snapshot()['screen'],'room')
+        self.assertEqual(live.refs['ed.TrapMainView'],[])
+        ref=live.refs['ed.TrapBattleView'][0];f.data[ref.address+4]=0
+        self.assertEqual(live.snapshot()['screen'],'transition')
+
+    def test_recycled_enemy_retries_entire_observation_but_persistent_mismatch_stops(self):
+        live,_,refs=fixture();read=live.heap.table;reads=[0]
+        def racing(ref):
+            result=read(ref)
+            if ref==refs['unit']:
+                reads[0]+=1
+                if reads[0]==1:return dict(result,_unitID=0,_unitTid=0)
+            return result
+        with patch.object(live.heap,'table',side_effect=racing):
+            self.assertEqual(live.snapshot()['enemies'][0]['tid'],2008)
+        self.assertEqual(reads[0],2)
+        def reset(ref):
+            result=read(ref)
+            return dict(result,_unitID=0,_unitTid=0) if ref==refs['unit'] else result
+        with patch.object(live.heap,'table',side_effect=reset):
+            with self.assertRaisesRegex(LiveReadError,'身份校验'):live.snapshot()
+
     def test_room_snapshot_uses_verified_model_fields_without_exporting_identity_secrets(self):
         live,_,_=fixture();s=live.snapshot()
         self.assertEqual((s['screen'],s['locks'],s['rage'],s['bullets']),('room',10,3,99000))

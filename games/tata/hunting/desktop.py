@@ -17,8 +17,9 @@ def main():
     p.add_argument('--low',type=int,choices=(1,2,5),default=1);p.add_argument('--no-rage',action='store_true')
     p.add_argument('--rounds',type=int,default=10);p.add_argument('--seconds',type=float,default=3600)
     p.add_argument('--reserve',type=int,default=0);p.add_argument('--stop-file',type=Path);p.add_argument('--run-dir',type=Path)
+    p.add_argument('--test-fish',action='store_true',help='实机验收：在2倍场用鱼怪臭臭替代200倍萨满，不手动射击或刷道具')
     a=p.parse_args()
-    options=Options(a.stock,a.low,not a.no_rage,a.rounds,a.seconds,a.reserve).validate()
+    options=Options(a.stock,a.low,not a.no_rage,a.rounds,a.seconds,a.reserve,a.test_fish).validate()
     folder=a.run_dir or RUNTIME/'runs'/uuid.uuid4().hex;folder.mkdir(parents=True,exist_ok=True)
     def event(kind,**data):
         value=dict(time=datetime.now(timezone.utc).isoformat(),event=kind,**data)

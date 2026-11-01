@@ -13,7 +13,7 @@
 
 ## 环境与启动
 
-**Tata 统一辅助器：双击 `Start-Tata.cmd`，或运行 `python run.py tata`。** 同一窗口提供主线图鉴 / 地图布阵、模拟与自动推关、自动钓鱼和围猎臭臭，支持任务状态与统一停止。围猎尚待实机验收。原有独立入口继续可用，详见 [Tata 说明](games/tata/README.md)。
+**Tata 统一辅助器：双击 `Start-Tata.cmd`，或运行 `python run.py tata`。** 同一窗口提供主线图鉴 / 地图布阵、模拟与自动推关、自动钓鱼和围猎臭臭，支持任务状态与统一停止。围猎已实测通过2倍鱼怪与200倍萨满各一轮锁定、跟踪和退出，低倍补道具及奖励弹窗仍待实测。原有独立入口继续可用，详见 [Tata 说明](games/tata/README.md)。
 
 **Tata 主线工作台：双击 `Start-Tata-Mainline.cmd`。** Python 3.10+ 环境下，首次自动安装依赖并从仓库自带资源包准备关卡、模拟引擎和基础图片；换电脑无需旧电脑文件。登录新账号后在面板同步角色池，详见[主线说明](games/tata/mainline/README.md)。
 
