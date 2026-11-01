@@ -25,6 +25,15 @@ class Controls:
 
 
 class EngineTests(unittest.TestCase):
+    def test_obscured_rage_button_defers_without_clicking_or_stopping(self):
+        from hunt_layout import LayoutError
+        with tempfile.TemporaryDirectory() as directory:
+            state=room(1,0,enemies=[enemy()]);runner,current,controls,events=self.driver(state,Path(directory))
+            runner.layout.icon=Mock(side_effect=LayoutError('covered by incoming boss'))
+            runner.click_item(state,'rage')
+            self.assertFalse(controls.clicks);self.assertGreater(runner.rage_retry_at,0)
+            self.assertEqual(events[-1][0],'rage_wait')
+
     def test_room_controls_retry_transition_frame_without_clicking(self):
         from hunt_layout import LayoutError
         with tempfile.TemporaryDirectory() as directory:

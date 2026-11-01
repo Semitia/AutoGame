@@ -2,6 +2,7 @@
 import argparse
 import itertools
 import math
+import sys
 from pathlib import Path
 
 import cv2
@@ -240,12 +241,22 @@ class AutoLayout:
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out',type=Path,default=RUNTIME/'autoplay-geometry.json')
+    parser.add_argument('--hwnd',type=int,help='明确选择游戏窗口')
+    parser.add_argument('--foreground',action='store_true',help='只读屏幕截图；默认后台窗口截图')
     args=parser.parse_args()
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+    from windows_runtime import window_pids,background_input
+    from desktop_input import find_game_window
+    hwnd=find_game_window(args.hwnd)
     from live_battle import LiveBattle
-    live=LiveBattle()
+    live=LiveBattle(pids=window_pids(hwnd))
     try:
         state=live.snapshot()
         detector=AutoLayout()
+        if not args.foreground:detector.capture=background_input(hwnd).capture
+        else:
+            from calibration import capture_visible_game
+            detector.capture=lambda:capture_visible_game(hwnd=hwnd)
         if state.get('screen')=='chapter':
             image=detector.capture()
             point=center(chapter_start_button(cv2.cvtColor(np.asarray(image.convert('RGB')),cv2.COLOR_RGB2BGR)))

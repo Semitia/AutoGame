@@ -104,6 +104,23 @@ class AutoLayoutTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name=='nt','Windows point transport')
 class WindowAdaptationTests(unittest.TestCase):
+    def test_layout_cli_uses_selected_window_background_without_input(self):
+        import sys
+        from unittest.mock import Mock
+        import auto_layout
+        image=Image.new('RGB',(400,750))
+        live=SimpleNamespace(snapshot=lambda:dict(battle=dict(state=1)),close=Mock())
+        capture=Mock(return_value=image)
+        detector=SimpleNamespace(recognize=Mock(return_value=dict(width=400,height=750,map_inliers=20)))
+        runtime=SimpleNamespace(window_pids=Mock(return_value=[999]),background_input=Mock(return_value=SimpleNamespace(capture=capture)))
+        with tempfile.TemporaryDirectory() as directory,patch.dict(sys.modules,{'windows_runtime':runtime}),\
+             patch.object(sys,'argv',['auto_layout','--hwnd','123','--out',str(Path(directory)/'layout.json')]),\
+             patch('desktop_input.find_game_window',return_value=123),patch('live_battle.LiveBattle',return_value=live) as create,\
+             patch.object(auto_layout,'AutoLayout',return_value=detector):
+            self.assertEqual(auto_layout.main(),0)
+        create.assert_called_once_with(pids=[999]);runtime.background_input.assert_called_once_with(123)
+        capture.assert_called_once();live.close.assert_called_once()
+
     def test_fast_gesture_retains_segmented_drag_and_always_releases_on_failure(self):
         import desktop_input as transport
         game=transport.GameInput.__new__(transport.GameInput)

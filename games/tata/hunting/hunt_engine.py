@@ -19,6 +19,7 @@ class Runner:
         self.evidence_dir=Path(evidence_dir) if evidence_dir else None;self.last_observation=None
         self.farm_aim=None;self.last_aim=0.;self.last_aim_log=0.;self.last_aim_warning=0.
         self.control_path=Path(control_path) if control_path else None;self.last_control=0.
+        self.rage_retry_at=0.
 
     def update_control(self):
         if self.control_path is None or time.monotonic()-self.last_control<1:return
@@ -86,7 +87,15 @@ class Runner:
             raise RuntimeError('输入前围猎账号或房间已改变，停止')
 
     def click_item(self,state,name):
-        self.input.release();point=self.layout.icon(self.image(),name)
+        self.input.release()
+        try:point=self.layout.icon(self.image(),name)
+        except LayoutError as exc:
+            if name!='rage':raise
+            # Incoming boss portraits can temporarily cover the rage icon.
+            # Keep farming the real mobs and retry the visible button later.
+            self.rage_retry_at=time.monotonic()+2
+            self.emit('rage_wait',reason='狂暴按钮暂被遮挡，继续瞄准怪群并稍后重试：'+str(exc))
+            return
         current=self.snapshot();self.room_check(state,current)
         if name=='lock':
             # Recheck after image work, immediately before spending an item.
@@ -159,7 +168,10 @@ class Runner:
                     self.wait(lambda current:current['screen'] in ('room','lobby','reward'),20)
                     continue
                 if s['screen']=='room':self.room_controls(s)
-                action=self.policy.decide(s);kind=action['kind']
+                action=self.policy.decide(s)
+                if action['kind']=='rage' and time.monotonic()<self.rage_retry_at:
+                    action=dict(kind='fire',reason='狂暴按钮暂被遮挡，继续打怪等待重试')
+                kind=action['kind']
                 if kind!=previous or time.monotonic()-last_metrics>1:
                     self.emit('state',phase=kind,reason=action.get('reason',''),completed=self.policy.completed,
                         locks=s['locks'],rage=s['rage'],bullets=s['bullets'],multiplier=s.get('multiplier'),
@@ -188,7 +200,8 @@ class Runner:
                         if target is None:self.input.release();time.sleep(.02);continue
                         try:point=self.farm_aim.point(target)
                         except LayoutError:self.input.release();time.sleep(.02);continue
-                        if self.policy.decide(latest)['kind']=='fire':
+                        decision=self.policy.decide(latest)['kind']
+                        if decision=='fire' or (decision=='rage' and time.monotonic()<self.rage_retry_at):
                             self.input.fire_at(point,.165 if latest['rage_active'] else .33);self.last_aim=time.monotonic()
                             if self.last_aim-self.last_aim_log>1:
                                 self.emit('aim',target_id=target['id'],target_tid=target['tid'],point=point)

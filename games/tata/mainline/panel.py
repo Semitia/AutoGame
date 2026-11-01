@@ -699,9 +699,11 @@ class MainlinePanel:
         if any(getattr(self,name,None) is not None and getattr(self,name).poll() is None for name in ('autoplay_process','combat_process')):
             raise ValueError('请先停止自动推关或搜索，再检查布局')
         if getattr(self,'layout_process',None) is not None and self.layout_process.poll() is None:return
-        RUNTIME.mkdir(parents=True,exist_ok=True)
-        self.layout_log=(RUNTIME/'layout-check.log').open('w',encoding='utf-8')
-        self.layout_process=subprocess.Popen([sys.executable,'-X','utf8',str(Path(__file__).with_name('auto_layout.py'))],
+        self.sync_root.mkdir(parents=True,exist_ok=True)
+        self.layout_log=(self.sync_root/'layout-check.log').open('w',encoding='utf-8')
+        args=[sys.executable,'-X','utf8',str(Path(__file__).with_name('auto_layout.py')),'--out',str(self.sync_root/'autoplay-geometry.json')]
+        if self.bound_hwnd is not None:args+=['--hwnd',str(self.bound_hwnd)]
+        self.layout_process=subprocess.Popen(args,
             stdout=self.layout_log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         self.status.set('正在只读识别当前游戏窗口和布局，不切换前台、不执行游戏输入…')
         self.root.after(300,self.poll_layout)
