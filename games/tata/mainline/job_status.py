@@ -55,6 +55,8 @@ def autoplay_summary(value):
     if value.get('search'):return search_summary(value['search'])
     event=value.get('event');reason=value.get('reason','')
     labels={'initializing':'正在连接游戏','planning':'同步后评估阵容','deploy':'自动布阵',
+        'plan_ready':'阵容已选定','roster_verified':'最新养成核验通过','layout_recognized':'当前布局已识别',
+        'unit_deployed':'布阵中','entering_preparation':'正在进入布阵页','stage_won':'实战获胜',
         'deployment_verified':'整队核验通过','request_order_verified':'入场顺序复核通过','battle_started':'实战中',
         'request_order_checked':'整队与入场顺序已核对（模拟复核已关闭）',
         'battle_settled':'实战已结算','preparation_ready':'下一关布阵就绪','stage_advanced':'已进入下一关',

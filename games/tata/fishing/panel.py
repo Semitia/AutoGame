@@ -33,17 +33,19 @@ def friendly_error(text):
 
 
 class FishingPanel:
-    def __init__(self,root,observe=False):
+    def __init__(self,root,observe=False,*,embedded=False,before_start=None):
         self.root=root;self.observe=observe;self.process=None;self.stop_file=None
+        self.before_start=before_start
         self.queue=queue.Queue();self.stopping=False;self.closing=False;self.deadline=None
         self.counts={'cast':0,'reel':0,'collect':0};self.started=None;self.last_error=None
-        root.title('自动钓鱼 · 控制面板');root.resizable(False,False)
-        root.configure(bg='#f4f7fb');root.attributes('-topmost',True)
-        style=ttk.Style(root);style.theme_use('clam')
-        style.configure('TFrame',background='#f4f7fb')
-        style.configure('TLabel',background='#f4f7fb',foreground='#20324a',font=('Microsoft YaHei UI',10))
-        style.configure('Title.TLabel',font=('Microsoft YaHei UI',18,'bold'))
-        style.configure('Hint.TLabel',foreground='#64748b',font=('Microsoft YaHei UI',9))
+        if not embedded:
+            root.title('自动钓鱼 · 控制面板');root.resizable(False,False)
+            root.configure(bg='#f4f7fb');root.attributes('-topmost',True)
+            style=ttk.Style(root);style.theme_use('clam')
+            style.configure('TFrame',background='#f4f7fb')
+            style.configure('TLabel',background='#f4f7fb',foreground='#20324a',font=('Microsoft YaHei UI',10))
+            style.configure('Title.TLabel',font=('Microsoft YaHei UI',18,'bold'))
+            style.configure('Hint.TLabel',foreground='#64748b',font=('Microsoft YaHei UI',9))
         outer=ttk.Frame(root,padding=22);outer.pack(fill='both',expand=True)
         ttk.Label(outer,text='自动钓鱼',style='Title.TLabel').pack(anchor='w')
         ttk.Label(outer,text='塔塔冒险队 · 电脑微信版',style='Hint.TLabel').pack(anchor='w',pady=(2,16))
@@ -66,8 +68,9 @@ class FishingPanel:
         self.log.pack(fill='x')
         ttk.Label(outer,text='保持游戏在前台；F8 或点按钮即可停止。',style='Hint.TLabel').pack(anchor='w',pady=(12,0))
         if observe:ttk.Label(outer,text='测试模式：仅观察，不点击游戏',style='Hint.TLabel').pack(anchor='w')
-        self.position()
-        root.protocol('WM_DELETE_WINDOW',self.close)
+        if not embedded:
+            self.position()
+            root.protocol('WM_DELETE_WINDOW',self.close)
         root.after(100,self.poll)
 
     def position(self):
@@ -92,6 +95,7 @@ class FishingPanel:
 
     def start(self):
         try:
+            if self.before_start:self.before_start()
             minutes=float(self.minutes.get())
             if not 1<=minutes<=1440:raise ValueError('运行时长请输入 1～1440 分钟')
             hwnd=find_game_window()
@@ -101,8 +105,8 @@ class FishingPanel:
                  '--seconds',str(minutes*60),'--stop-file',str(self.stop_file)]
             if self.observe:cmd.append('--observe')
             env=dict(os.environ,PYTHONIOENCODING='utf-8')
-            # The click on Start authorizes focusing the game; later focus loss stops the runner.
-            user.SetForegroundWindow(hwnd)
+            # The worker focuses only after it owns the shared game control lease.
+            cmd.append('--activate')
             self.process=subprocess.Popen(cmd,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                 text=True,encoding='utf-8',errors='replace',bufsize=1,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
             self.counts={'cast':0,'reel':0,'collect':0};self.stopping=False;self.last_error=None;self.started=time.monotonic()

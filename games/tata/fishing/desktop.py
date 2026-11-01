@@ -48,7 +48,8 @@ def main():
     def stopped():
         return stop.exists() or (args.stop_file is not None and args.stop_file.exists()) or w.emergency_stop()
 
-    with device_lease('windows-fishing-'+str(args.hwnd)):
+    # Shared with mainline autoplay, including launches outside the unified UI.
+    with device_lease('windows-fishing-'+str(args.hwnd),check_processes=False):
         stop.unlink(missing_ok=True)
         try:
             if args.activate:

@@ -1,0 +1,9 @@
+{
+  "version": "0.50.1",
+  "source": "Original APK Unity sprite dependencies; no player screenshots",
+  "sprites": {
+    "lock": "4c6b15ce87f6789d69b82f145aa8723aa85d9e6f94c3e2ce86bbf21bb02833a2",
+    "rage": "1912a5ca7192fc9ac54de19a01a1a38cf9be23e7f598071f56d0db7e1816e92e",
+    "close": "5e81a2d769a39d16bd37041f3871f5eda0759cb2388fe3308273f78c6e0bf693"
+  }
+}

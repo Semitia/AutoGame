@@ -9,8 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     try:
+        options=sys.argv[1:]
+        assistant=bool(options and options[0]=='--assistant')
+        if assistant:options=options[1:]
+        feature='assistant' if assistant else 'mainline'
         missing = []
-        for module in ('PIL', 'lupa', 'google.protobuf', 'cv2'):
+        for module in ('PIL', 'lupa', 'google.protobuf', 'cv2', 'numpy'):
             try:
                 found = importlib.util.find_spec(module)
             except ModuleNotFoundError:
@@ -18,15 +22,16 @@ def main():
             if found is None:
                 missing.append(module)
         if missing:
-            print('首次启动：正在安装主线工作台依赖，请保持此窗口打开…', flush=True)
-            subprocess.run([sys.executable, '-m', 'pip', 'install', '-r',
-                            str(ROOT / 'games/tata/mainline/requirements.txt')], check=True)
+            print('首次启动：正在安装塔塔辅助器依赖，请保持此窗口打开…', flush=True)
+            requirements=['-r',str(ROOT / 'games/tata/mainline/requirements.txt')]
+            if assistant:requirements+=['-r',str(ROOT / 'games/tata/requirements.txt')]
+            subprocess.run([sys.executable, '-m', 'pip', 'install', *requirements], check=True)
         executable = Path(sys.executable)
         windowless = executable.with_name('pythonw.exe')
         subprocess.Popen([str(windowless if windowless.exists() else executable),
-                          str(ROOT / 'run.py'), 'tata', 'mainline', *sys.argv[1:]], cwd=ROOT)
+                          '-X', 'utf8', str(ROOT / 'run.py'), 'tata', feature, *options], cwd=ROOT)
     except Exception as exc:
-        print(f'主线工作台启动失败：{exc}', flush=True)
+        print(f'塔塔工具启动失败：{exc}', flush=True)
         input('按回车关闭；可以复制上面的错误信息。')
         return 1
     return 0

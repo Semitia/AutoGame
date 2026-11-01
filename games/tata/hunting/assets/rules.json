@@ -1,0 +1,257 @@
+{
+  "version": "0.50.1",
+  "target_tid": 2008,
+  "lock_item": 30,
+  "rage_item": 31,
+  "rooms": [
+    {
+      "id": 1,
+      "multiplier": 1,
+      "name": "特臭伊之围",
+      "unlock_cost": 0,
+      "need_bullets": 0
+    },
+    {
+      "id": 2,
+      "multiplier": 2,
+      "name": "迦太臭之围",
+      "unlock_cost": 200,
+      "need_bullets": 900
+    },
+    {
+      "id": 3,
+      "multiplier": 5,
+      "name": "君士臭丁之围",
+      "unlock_cost": 600,
+      "need_bullets": 2250
+    },
+    {
+      "id": 4,
+      "multiplier": 10,
+      "name": "尼西臭之围",
+      "unlock_cost": 3300,
+      "need_bullets": 4500
+    },
+    {
+      "id": 5,
+      "multiplier": 20,
+      "name": "卡昂臭之围",
+      "unlock_cost": 12500,
+      "need_bullets": 9000
+    },
+    {
+      "id": 6,
+      "multiplier": 50,
+      "name": "马耳臭之围",
+      "unlock_cost": 25000,
+      "need_bullets": 22500
+    },
+    {
+      "id": 7,
+      "multiplier": 100,
+      "name": "奥斯臭德之围",
+      "unlock_cost": 50000,
+      "need_bullets": 45000
+    },
+    {
+      "id": 8,
+      "multiplier": 200,
+      "name": "维也臭之围",
+      "unlock_cost": 100000,
+      "need_bullets": 90000
+    },
+    {
+      "id": 9,
+      "multiplier": 500,
+      "name": "阿臭西亚之围",
+      "unlock_cost": 1000000,
+      "need_bullets": 900000
+    },
+    {
+      "id": 10,
+      "multiplier": 1000,
+      "name": "拉臭谢尔之围",
+      "unlock_cost": 2000000,
+      "need_bullets": 1800000
+    }
+  ],
+  "enemies": [
+    {
+      "id": 1101,
+      "score": 2,
+      "kind": 1
+    },
+    {
+      "id": 1102,
+      "score": 3,
+      "kind": 1
+    },
+    {
+      "id": 1103,
+      "score": 4,
+      "kind": 1
+    },
+    {
+      "id": 1104,
+      "score": 5,
+      "kind": 1
+    },
+    {
+      "id": 1105,
+      "score": 5,
+      "kind": 1
+    },
+    {
+      "id": 1106,
+      "score": 6,
+      "kind": 1
+    },
+    {
+      "id": 1107,
+      "score": 6,
+      "kind": 1
+    },
+    {
+      "id": 1108,
+      "score": 7,
+      "kind": 1
+    },
+    {
+      "id": 1110,
+      "score": 7,
+      "kind": 1
+    },
+    {
+      "id": 1111,
+      "score": 8,
+      "kind": 1
+    },
+    {
+      "id": 1112,
+      "score": 8,
+      "kind": 1
+    },
+    {
+      "id": 1113,
+      "score": 12,
+      "kind": 2
+    },
+    {
+      "id": 1114,
+      "score": 12,
+      "kind": 2
+    },
+    {
+      "id": 1115,
+      "score": 15,
+      "kind": 2
+    },
+    {
+      "id": 1116,
+      "score": 15,
+      "kind": 2
+    },
+    {
+      "id": 1117,
+      "score": 20,
+      "kind": 2
+    },
+    {
+      "id": 1118,
+      "score": 20,
+      "kind": 2
+    },
+    {
+      "id": 1119,
+      "score": 25,
+      "kind": 2
+    },
+    {
+      "id": 1120,
+      "score": 25,
+      "kind": 2
+    },
+    {
+      "id": 1121,
+      "score": 30,
+      "kind": 2
+    },
+    {
+      "id": 1122,
+      "score": 30,
+      "kind": 2
+    },
+    {
+      "id": 1123,
+      "score": 45,
+      "kind": 2
+    },
+    {
+      "id": 1124,
+      "score": 45,
+      "kind": 2
+    },
+    {
+      "id": 2001,
+      "score": 100,
+      "kind": 3
+    },
+    {
+      "id": 2002,
+      "score": 150,
+      "kind": 3
+    },
+    {
+      "id": 2003,
+      "score": 200,
+      "kind": 3
+    },
+    {
+      "id": 2004,
+      "score": 300,
+      "kind": 3
+    },
+    {
+      "id": 2005,
+      "score": 500,
+      "kind": 3
+    },
+    {
+      "id": 2006,
+      "score": 700,
+      "kind": 3
+    },
+    {
+      "id": 2007,
+      "score": 1000,
+      "kind": 3
+    },
+    {
+      "id": 2008,
+      "score": 1500,
+      "kind": 3
+    }
+  ],
+  "sources": [
+    {
+      "path": "Config/TrapDungeon.luae",
+      "sha256": "43404030e506a1c490d57ac8b191d0a2bbcf8409e3be86bee3d5754e90e2233b"
+    },
+    {
+      "path": "Config/TrapZobo.luae",
+      "sha256": "aaba4bf959419b5a7d1d62ed49b5fbaf56340bab1915e292293bcd915e35548f"
+    },
+    {
+      "path": "Config/TrapParam.luae",
+      "sha256": "98d9c7ffaedee6c7c6ff372a905865ff5c7ef44d5bb3ee2a7e5136e31c0c2e0f"
+    },
+    {
+      "path": "Config/Item.luae",
+      "sha256": "ba6ef6763743d02b3c1a89bd7a363b230091b998548db73c987c32e0d820fec6"
+    },
+    {
+      "path": "Config/UnitRes.luae",
+      "sha256": "d57aa98e80c6e40fd1c5237139d862d76780384d4299dbefcf7bafb608da282f"
+    }
+  ]
+}

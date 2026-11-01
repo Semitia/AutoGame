@@ -65,7 +65,7 @@ class SearchSessionTests(unittest.TestCase):
     def test_reusing_current_formation_respects_review_mode(self):
         for mode,seeds in (('light',[123456,701]),('none',[123456]),('full',[123456,701,2029,8191])):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as folder:
-                sim=Oracle();sim.answer=lambda rows,seed:(True,100);sim.capture['shared_level']=235
+                sim=Oracle();sim.answer=lambda rows,seed:(True,100);sim.capture.update(shared_level=235,pets=[])
                 runner=Runner.__new__(Runner);runner.review_mode=mode;runner.stop_when_verified=True
                 runner.catalog=SimpleNamespace(stage=lambda _:sim.stage);runner.folder=Path(folder)
                 runner.event=lambda *args,**kw:None;runner.compute_stopped=lambda:False
@@ -200,7 +200,8 @@ class SearchSessionTests(unittest.TestCase):
             path=Path(folder);write_json(path/'geometry.json',{})
             with patch('sys.argv',['autoplay','--geometry',str(path/'geometry.json'),'--run-dir',str(path)]),\
                 patch('autoplay.Runner',side_effect=LiveReadError('有效布阵对象不唯一')),\
-                patch('msvcrt.locking'),patch('autoplay.RUNTIME',path):
+                patch('msvcrt.locking'),patch('autoplay.RUNTIME',path),\
+                patch('desktop_input.find_game_window',return_value=123):
                 with self.assertRaises(LiveReadError):main()
             status=read_json(path/'status.json')
             self.assertEqual(status['event'],'stopped');self.assertEqual(status['reason_code'],'game_state_error')

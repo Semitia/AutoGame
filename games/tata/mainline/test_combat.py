@@ -65,6 +65,14 @@ class OriginalCombatTests(unittest.TestCase):
         self.assertGreater(first['kills'],0)
         self.assertIn(first['result'],(1,2,3))
 
+    def test_cross_stage_reuse_matches_a_fresh_runtime(self):
+        self.sim.evaluate(self.stage,self.plan,701)
+        stage=self.catalog.stage(827)
+        reused=self.sim.evaluate(stage,self.plan,701)
+        fresh=Simulator(self.sim.capture,self.catalog).evaluate(stage,self.plan,701)
+        for key in ('result','kills','damage','battle_secs','survivors','score'):
+            self.assertEqual(reused[key],fresh[key],key)
+
     def test_replay_trace_and_illegal_deployment(self):
         result=self.sim.evaluate(self.stage,self.plan,701,trace=True)
         frames=result['frames'];times=[f['time'] for f in frames]

@@ -1,12 +1,56 @@
 """Synthetic Lua ABI fixtures, including early server stage advancement."""
 import struct
 import unittest
+from unittest.mock import patch
 from live_battle import LiveBattle,find_instances,lua_pairs,current_prepare
 from live_roster import LiveReadError
 from test_live_roster import Fixture
 
 
 class LiveBattleTests(unittest.TestCase):
+    def roster_fixture(self):
+        from live_roster import find_pet_models
+        from live_session import account_key
+        live,f=self.fixture();f.model()
+        f.table(dict(_uid=123,_name='测试',token='DO NOT EXPORT',**{'class':f.table({'__cname':'ed.PlayerModel'})}))
+        live.refs=find_instances(bytes(f.data),{'ed.PlayerModel','ed.StageModel'},(b'_uid',b'_stageID'))
+        live.pet_refs=find_pet_models(bytes(f.data));live.account_key=account_key(123)
+        return live,f
+
+    def test_cached_session_roster_is_fresh_and_needs_no_heap_scan_or_process_query(self):
+        live,_=self.roster_fixture()
+        with patch('live_battle.renderer_pids',side_effect=AssertionError('process query')),\
+             patch('live_battle.find_instances',side_effect=AssertionError('heap scan')),\
+             patch('live_battle.find_pet_models',side_effect=AssertionError('roster scan')):
+            value=live.capture_roster()
+        self.assertEqual(value['account']['uid'],'123')
+        self.assertEqual(value['shared_level'],234)
+        self.assertNotIn('DO NOT EXPORT',str(value))
+
+    def test_roster_fast_path_still_rejects_mutation_wrong_uid_and_duplicate_models(self):
+        from live_roster import extract_model
+        from live_session import account_key
+        live,_=self.roster_fixture();observed=extract_model(live.heap,live.pet_refs[0])
+        with patch('live_battle.extract_model',side_effect=[observed,dict(observed,shared_level=235)]):
+            with self.assertRaisesRegex(LiveReadError,'正在变化'):live.capture_roster()
+        live.account_key=account_key(456)
+        with self.assertRaisesRegex(LiveReadError,'账号已切换'):live.capture_roster()
+        live,_=self.roster_fixture();live.pet_refs.append(live.pet_refs[0])
+        self.assertEqual(live.capture_roster()['shared_level'],234)
+        live.pet_refs.append(live.heap.table(live.pet_refs[0])['class'])
+        with self.assertRaisesRegex(LiveReadError,'唯一有效角色池'):live.capture_roster()
+
+    def test_refresh_keeps_the_verified_reader_instead_of_enumerating_renderers(self):
+        from types import SimpleNamespace
+        live,f=self.roster_fixture();reads=[]
+        live.base=100;live.size=len(f.data)
+        def read(address,size):reads.append((address,size));return bytes(f.data)
+        reader=SimpleNamespace(read=read);live.reader=reader
+        with patch('live_battle.renderer_pids',side_effect=AssertionError('process query')):live.refresh()
+        self.assertIs(live.reader,reader)
+        self.assertEqual(reads,[(100,len(f.data))])
+        self.assertEqual(len(live.pet_refs),1)
+
     def test_lua_pairs_visits_array_before_hash_storage(self):
         f=Fixture();ref=f.table({5:'five',3:'three'})
         array=f.alloc(32);f.data[array:array+16]=f.value('one');f.data[array+16:array+32]=f.value('two')

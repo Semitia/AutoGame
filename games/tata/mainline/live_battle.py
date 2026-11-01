@@ -4,11 +4,13 @@ from datetime import datetime,timezone
 import struct
 import sys
 
-from live_roster import LuaHeap,TableRef,LiveReadError,WindowsReader,renderer_pids
+from live_roster import LuaHeap,TableRef,LiveReadError,WindowsReader,renderer_pids,find_pet_models,extract_model,NodeIndex
 from model import RUNTIME,write_json
 
 
 CLASSES={'ed.StageModel','ed.StageBattleController','ed.StageBattlePrepareView','ed.StageBattleVictoryView','ed.WorldMapView'}
+DISCOVERY_CLASSES=CLASSES|{'ed.PlayerModel'}
+DISCOVERY_KEYS=(b'_stageID',b'stageID',b'battleController',b'_uid',b'stageModel')
 
 
 def find_instances(data, classes=CLASSES, keys=(b'_stageID',b'stageID',b'battleController',b'stageModel')):
@@ -22,12 +24,12 @@ def find_instances(data, classes=CLASSES, keys=(b'_stageID',b'stageID',b'battleC
                     if q>=16 and data[q-7]==68:nodes.append(q-16)
                     q+=4
             pos+=len(key)+1
-    result={};pos=0
+    index=NodeIndex(nodes);result={};pos=0
     while nodes and (pos:=data.find(b'\x05',pos))>=0:
         p=pos-4;pos+=1
         if p<0 or p%8 or p+32>len(data) or data[p+7]>11:continue
         base=struct.unpack_from('<I',data,p+16)[0]
-        if not any(base<=q<base+24*(1<<data[p+7]) and (q-base)%24==0 for q in nodes):continue
+        if not index.contains(base,1<<data[p+7]):continue
         try:
             ref=TableRef(p);table=heap.table(ref)
             if not isinstance(table.get('class'),TableRef):continue
@@ -96,17 +98,48 @@ class LiveBattle:
                 for base,size in reader.heaps():
                     data=reader.read(base,size)
                     if not all(marker in data for marker in (b'cs_common.Dn_Pet',b'PetModel',b'evoTID')):continue
+                    refs=find_instances(data,DISCOVERY_CLASSES,DISCOVERY_KEYS)
                     if account_key:
                         from live_session import session_fields
-                        refs=find_instances(data,CLASSES|{'ed.PlayerModel'},(b'_stageID',b'stageID',b'battleController',b'_uid',b'stageModel'))
                         frozen=LuaHeap(lambda p,n:data[p:p+n],len(data))
                         if session_fields(frozen,refs)['account']['key']!=account_key:continue
-                    else:refs=find_instances(data)
-                    if refs.get('ed.StageModel'):found.append((pid,base,size,refs))
+                    if refs.get('ed.StageModel'):found.append((pid,base,size,refs,find_pet_models(data)))
             finally:reader.close()
         if len(found)!=1:raise LiveReadError(f'需要唯一已登录塔塔主线模型，当前找到 {len(found)} 个')
-        pid,base,size,self.refs=found[0];self.reader=WindowsReader(pid)
+        pid,base,size,self.refs,self.pet_refs=found[0];self.reader=WindowsReader(pid)
+        self.base,self.size=base,size
         self.heap=LuaHeap(lambda p,n:self.reader.read(base+p,n),size)
+
+    def refresh(self):
+        """New views need discovery, but not process enumeration or a new reader."""
+        data=self.reader.read(self.base,self.size)
+        refs=find_instances(data,DISCOVERY_CLASSES,DISCOVERY_KEYS)
+        if not refs.get('ed.StageModel'):raise LiveReadError('主线内存已改变，请重新定位')
+        if self.account_key:
+            from live_session import session_fields
+            frozen=LuaHeap(lambda p,n:data[p:p+n],len(data))
+            if session_fields(frozen,refs)['account']['key']!=self.account_key:
+                raise LiveReadError('游戏账号已切换，停止自动输入；请重新同步账号')
+        self.refs=refs
+        self.pet_refs=find_pet_models(data)
+
+    def capture_roster(self):
+        """Read two fresh UID/roster observations from the already verified heap."""
+        from live_session import session_fields
+        def observe():
+            with self.heap.cached():
+                models=[ref for ref in dict.fromkeys(self.pet_refs)
+                        if self.heap.table(ref).get('_behavior_destructed') is not True]
+                if len(models)!=1:raise LiveReadError('需要唯一有效角色池，请重新定位')
+                identity=session_fields(self.heap,self.refs)
+                value=dict(**identity,**extract_model(self.heap,models[0]))
+                return value
+        first,second=observe(),observe()
+        if first!=second:raise LiveReadError('账号、关卡或养成正在变化，请重试')
+        if self.account_key and first['account']['key']!=self.account_key:
+            raise LiveReadError('游戏账号已切换，停止自动输入；请重新同步账号')
+        return dict(schema_version=2,source='wechat-webgl-memory',
+                    captured_at=datetime.now(timezone.utc).isoformat(),**first)
 
     def close(self):
         if self.reader:self.reader.close();self.reader=None
@@ -127,6 +160,9 @@ class LiveBattle:
     def tables(self,name):return [t for _,t in self.instances(name)]
 
     def snapshot(self,debug=False):
+        with self.heap.cached():return self._snapshot(debug)
+
+    def _snapshot(self,debug=False):
         if getattr(self,'account_key',None):
             from live_session import session_fields
             if session_fields(self.heap,self.refs)['account']['key']!=self.account_key:

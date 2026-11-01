@@ -1,8 +1,10 @@
 """Standalone, bounded mainline loop: sync, simulate, deploy, verify, fight, advance."""
 import argparse
+from contextlib import ExitStack
 from datetime import datetime,timezone
 import json
 import math
+import sys
 from pathlib import Path
 import time
 import uuid
@@ -12,6 +14,7 @@ from review import MODES,review_seeds,preflight_seeds,passed
 
 STOP=RUNTIME/'AUTOPLAY-STOP'
 GEOMETRY=RUNTIME/'autoplay-geometry.json'
+POLL_SECONDS=.03
 
 
 class WaitTimeout(RuntimeError):pass
@@ -143,22 +146,33 @@ class Runner:
         from live_roster import LiveReadError
         try:return self.live.snapshot()
         except LiveReadError:
-            self.live.close()
-            from live_battle import LiveBattle
-            self.live=LiveBattle(account_key=getattr(self,'account_key',None));return self.live.snapshot()
+            self.relocate();return self.live.snapshot()
 
     def relocate(self):
-        self.check_stop();self.live.close()
+        self.check_stop()
+        from live_roster import LiveReadError
+        try:
+            self.live.refresh()
+            return
+        except (LiveReadError,OSError):self.live.close()
         from live_battle import LiveBattle
         self.live=LiveBattle(account_key=getattr(self,'account_key',None))
 
-    def wait(self,predicate,timeout=15):
-        end=time.monotonic()+timeout
+    def wait(self,predicate,timeout=15,*,rediscover=False):
+        from live_roster import LiveReadError
+        end=time.monotonic()+timeout;next_scan=time.monotonic()+.15;last_error=None
         while time.monotonic()<end:
-            state=self.snapshot()
-            if predicate(state):return state
-            time.sleep(.25)
-        raise WaitTimeout('游戏状态等待超时，停止输入')
+            state=None
+            try:
+                state=self.snapshot()
+                if predicate(state):return state
+            except LiveReadError as exc:
+                if not rediscover:raise
+                last_error=exc
+            if rediscover and time.monotonic()>=next_scan and (not callable(rediscover) or rediscover(state or {})):
+                self.relocate();next_scan=time.monotonic()+.5
+            time.sleep(min(POLL_SECONDS,max(0,end-time.monotonic())))
+        raise WaitTimeout('游戏状态等待超时，停止输入'+('：'+str(last_error) if last_error else ''))
 
     def preparing(self,stage):
         state=self.snapshot()
@@ -167,11 +181,22 @@ class Runner:
         self.refresh_layout(state)
         return state
 
-    def action(self,stage,kind,resolve=None,**args):
+    def action(self,stage,kind,resolve=None,expect=None,timeout=1.2,**args):
         self.preparing(stage)
         if resolve:args=resolve(self.g)
-        getattr(self.input,kind)(**args);time.sleep(.12)
-        return self.preparing(stage)
+        getattr(self.input,kind)(**args)
+        def applied(state):
+            if not is_preparing(state,stage):raise RuntimeError('关卡或布阵阶段改变，停止输入')
+            self.refresh_layout(state)
+            return expect(state) if expect else True
+        return self.wait(applied,timeout)
+
+    def preparation_ready(self,state,stage):
+        if not is_preparing(state,stage):return False
+        from auto_layout import LayoutError
+        try:self.refresh_layout(state)
+        except LayoutError:return False
+        return True
 
     def enter_chapter(self,state,stage=None):
         stage=state.get('current_stage_id') if stage is None else stage
@@ -189,9 +214,8 @@ class Runner:
         if not ready(self.snapshot()):raise RunStopped('game_state_error','章节地图正在切换，保留现场，未点击')
         self.input.set_reference(*image.size);self.input.click(*point)
         self.event('entering_preparation',stage_id=stage)
-        time.sleep(.35);self.relocate()
-        result=self.wait(lambda s:is_preparing(s,stage),25)
-        self.refresh_layout(result)
+        result=self.wait(lambda s:self.preparation_ready(s,stage),25,
+            rediscover=lambda s:not is_preparing(s,stage))
         self.event('preparation_ready',stage_id=stage)
         return result
 
@@ -203,14 +227,15 @@ class Runner:
         self.event('deploy',stage_id=stage,previous=placements(state),target=target)
         gallery_page=None
         if not all(p in canonical(target) for p in canonical(state['selected'])):
-            state=self.action(stage,'click',x=self.g['clear'][0],y=self.g['clear'][1])
+            state=self.action(stage,'click',x=self.g['clear'][0],y=self.g['clear'][1],expect=lambda s:not s['selected'])
             if state['selected']:raise RuntimeError('清空阵容未生效')
         for pet in sorted(target,key=lambda p:self.catalog.units[str(p['unit_id'])]['UnitElement']):
             uid=pet['unit_id']
             if (uid,pet['x'],pet['y']) in canonical(state['selected']):continue
             element=self.catalog.units[str(uid)]['UnitElement']
             if not state['pet_list'] or any(self.catalog.units[str(i)]['UnitElement']!=element for i in state['pet_list']):
-                x,y=self.g['filters'][str(element)];state=self.action(stage,'click',x=x,y=y)
+                x,y=self.g['filters'][str(element)];state=self.action(stage,'click',x=x,y=y,
+                    expect=lambda s:bool(s['pet_list']) and all(self.catalog.units[str(i)]['UnitElement']==element for i in s['pet_list']))
                 gallery_page=None
             if any(self.catalog.units[str(i)]['UnitElement']!=element for i in state['pet_list']):raise RuntimeError('元素筛选未核验')
             visible=self.g.get('visible_cards',12)
@@ -225,14 +250,15 @@ class Runner:
                     previous=canonical(state['selected'])
                     state=self.action(stage,'drag',from_x=fx,from_y=fy,to_x=tx,to_y=ty)
                     if canonical(state['selected'])!=previous:raise RuntimeError('滚动误触了上阵操作，停止输入')
-                time.sleep(.6);gallery_page=(element,tail)
+                gallery_page=(element,tail)
             x,y=card_point(index,self.g,total,tail);before=len(state['selected'])
-            state=self.action(stage,'click',x=x,y=y)
+            state=self.action(stage,'click',x=x,y=y,expect=lambda s:any(p['unit_id']==uid for p in s['selected']))
             actual=next((p for p in state['selected'] if p['unit_id']==uid),None)
             if actual is None or len(state['selected'])!=before+1:raise RuntimeError(f'宠物 {uid} 上阵未核验')
             if (actual['_gridX'],actual['_gridY'])!=(pet['x'],pet['y']):
                 x,y=grid_point(actual['_gridX'],actual['_gridY'],self.g);tx,ty=grid_point(pet['x'],pet['y'],self.g)
-                state=self.action(stage,'drag',from_x=x,from_y=y,to_x=tx,to_y=ty)
+                state=self.action(stage,'drag',from_x=x,from_y=y,to_x=tx,to_y=ty,
+                    expect=lambda s:(uid,pet['x'],pet['y']) in canonical(s['selected']))
             if (uid,pet['x'],pet['y']) not in canonical(state['selected']):raise RuntimeError(f'宠物 {uid} 拖动未核验')
         if canonical(state['selected'])!=canonical(target):raise RuntimeError('整队布阵不一致，禁止开战')
         self.event('deployment_verified',stage_id=stage)
@@ -240,38 +266,44 @@ class Runner:
     def deploy_automatic(self,report):
         stage=report['stage_id'];target=report['placements'];state=self.preparing(stage)
         if canonical(state['selected'])==canonical(target):return
+        deployed_started=time.perf_counter()
+        self.event('deploy',stage_id=stage,previous=placements(state),target=target)
         def click(point):return dict(x=point[0],y=point[1])
         if not all(p in canonical(target) for p in canonical(state['selected'])):
-            state=self.action(stage,'click',resolve=lambda g:click(g['clear']))
+            state=self.action(stage,'click',resolve=lambda g:click(g['clear']),expect=lambda s:not s['selected'])
             if state['selected']:raise RuntimeError('清空阵容未生效')
         pets={p['tid']:p for p in self.sim.capture['pets']}
         for pet in sorted(target,key=lambda p:self.catalog.units[str(p['unit_id'])]['UnitElement']):
+            unit_started=time.perf_counter()
             uid=pet['unit_id'];state=self.preparing(stage)
             if (uid,pet['x'],pet['y']) in canonical(state['selected']):continue
             element=self.catalog.units[str(uid)]['UnitElement']
             if not state['pet_list'] or any(self.catalog.units[str(i)]['UnitElement']!=element for i in state['pet_list']):
-                state=self.action(stage,'click',resolve=lambda g:click(g['filters'][str(element)]))
+                state=self.action(stage,'click',resolve=lambda g:click(g['filters'][str(element)]),
+                    expect=lambda s:bool(s['pet_list']) and all(self.catalog.units[str(i)]['UnitElement']==element for i in s['pet_list']))
             if any(self.catalog.units[str(i)]['UnitElement']!=element for i in state['pet_list']):raise RuntimeError('元素筛选未核验')
             before=len(state['selected'])
             for attempt in range(max(6,len(state['pet_list'])//2+2)):
                 from auto_layout import LayoutError
-                for settling in range(8):
+                settle_end=time.monotonic()+1.2
+                while True:
                     state=self.preparing(stage);image=self.layout.capture()
                     try:
                         decision=self.layout.locate_card(image,state,uid,pets,geometry=self.g)
                         break
                     except LayoutError:
-                        if settling==7:
+                        if time.monotonic()>=settle_end:
                             image.save(self.folder/'layout-failure.png')
                             write_json(self.folder/'layout-failure.json',dict(stage_id=stage,unit_id=uid,selected=state['selected'],geometry=self.g))
                             raise
-                        time.sleep(.15)
+                        time.sleep(POLL_SECONDS)
                 from desktop_input import LayoutChanged
                 try:
                     if 'point' in decision:
-                        self.input.click(*decision['point']);time.sleep(.12);state=self.preparing(stage);break
+                        state=self.action(stage,'click',**click(decision['point']),
+                            expect=lambda s:any(p['unit_id']==uid for p in s['selected']));break
                     previous=canonical(state['selected']);fx,fy,tx,ty=decision['swipe']
-                    self.input.drag(fx,fy,tx,ty);time.sleep(.35);state=self.preparing(stage)
+                    state=self.action(stage,'drag',from_x=fx,from_y=fy,to_x=tx,to_y=ty)
                     if canonical(state['selected'])!=previous:raise RuntimeError('滚动误触了上阵操作，停止输入')
                 except LayoutChanged as exc:
                     if exc.gesture:raise
@@ -283,11 +315,13 @@ class Runner:
                 def move(g):
                     x,y=grid_point(actual['_gridX'],actual['_gridY'],g);tx,ty=grid_point(pet['x'],pet['y'],g)
                     return dict(from_x=x,from_y=y,to_x=tx,to_y=ty)
-                state=self.action(stage,'drag',resolve=move)
+                state=self.action(stage,'drag',resolve=move,
+                    expect=lambda s:(uid,pet['x'],pet['y']) in canonical(s['selected']))
             if (uid,pet['x'],pet['y']) not in canonical(state['selected']):raise RuntimeError(f'宠物 {uid} 拖动未核验')
-            self.event('unit_deployed',stage_id=stage,unit_id=uid,selected=len(state['selected']),target=len(target))
+            self.event('unit_deployed',stage_id=stage,unit_id=uid,selected=len(state['selected']),target=len(target),
+                elapsed_ms=round((time.perf_counter()-unit_started)*1000,1))
         if canonical(state['selected'])!=canonical(target):raise RuntimeError('整队布阵不一致，禁止开战')
-        self.event('deployment_verified',stage_id=stage)
+        self.event('deployment_verified',stage_id=stage,elapsed_ms=round((time.perf_counter()-deployed_started)*1000,1))
 
     def plan(self,state):
         from live_roster import read_live,to_roster
@@ -295,11 +329,15 @@ class Runner:
         from experience import Experience,context_for,stable_hash
         from search_policy import search
         from tactics import Tactics
-        capture=self.read_account_capture() if getattr(self,'account_key',None) else read_live();to_roster(capture,self.catalog)
+        started=time.perf_counter()
+        capture=self.read_account_capture() if getattr(self,'live',None) or getattr(self,'account_key',None) else read_live();to_roster(capture,self.catalog)
         stage_id=state['current_stage_id'];stage=self.catalog.stage(stage_id)
         write_json(self.folder/f'capture-{stage_id}.json',capture)
-        self.event('planning',stage_id=stage_id,level=capture['shared_level'])
-        sim=Simulator(capture,self.catalog);self.sim=sim
+        self.event('planning',stage_id=stage_id,level=capture['shared_level'],roster_ms=round((time.perf_counter()-started)*1000,1))
+        roster_key=stable_hash(dict(level=capture['shared_level'],pets=sorted(capture['pets'],key=lambda p:p['tid'])))
+        if getattr(self,'sim_roster_key',None)!=roster_key:
+            self.sim=Simulator(capture,self.catalog);self.sim_roster_key=roster_key
+        sim=self.sim
         current=state.get('request_order') or placements(state);memory=Experience()
         try:
             outcomes=[]
@@ -326,15 +364,28 @@ class Runner:
             from job_status import search_summary
             code='user_stop' if report.get('status')=='cancelled' else 'search_not_found'
             raise RunStopped(code,search_summary(report)+'；已保存最佳候选，尚未进行布阵')
+        # Only evidence produced by this plan call can avoid an identical
+        # preflight simulation. Preserve request order: equal cells are not enough.
+        self.plan_preflight=(sim,stage_id,
+            tuple((p['unit_id'],p['x'],p['y']) for p in report['placements']),dict(report['evaluation']))
+        self.event('plan_ready',stage_id=stage_id,elapsed_ms=round((time.perf_counter()-started)*1000,1))
         return report
 
     def verify_request_order(self,stage,state,report):
+        started=time.perf_counter()
         order=state.get('request_order')
         if not order or canonical(order)!=canonical(report['placements']):raise RuntimeError('无法核验原游戏的战斗入场顺序')
-        outcomes=[]
+        outcomes=[];reused=0
+        evidence=getattr(self,'plan_preflight',None)
+        same_evidence=(evidence is not None and evidence[0] is self.sim and evidence[1]==stage
+            and evidence[2]==tuple((p['unit_id'],p['x'],p['y']) for p in order))
         for seed in preflight_seeds(self.review_mode):
-            self.check_stop();outcomes.append(self.sim.evaluate(self.catalog.stage(stage),order,seed))
-        write_json(self.folder/f'preflight-{stage}.json',dict(placements=order,evaluations=outcomes,review_mode=self.review_mode))
+            self.check_stop()
+            if same_evidence and evidence[3].get('seed')==seed:
+                outcomes.append(dict(evidence[3]));reused+=1
+            else:outcomes.append(self.sim.evaluate(self.catalog.stage(stage),order,seed))
+        write_json(self.folder/f'preflight-{stage}.json',dict(placements=order,evaluations=outcomes,
+            review_mode=self.review_mode,reused_evaluations=reused))
         from experience import Experience
         from tactics import Tactics
         memory=Experience()
@@ -345,16 +396,28 @@ class Runner:
         if not all(o['won'] for o in outcomes):raise RunStopped('request_order_failed',f'按原游戏实际入场顺序复核未通过（{sum(o["won"] for o in outcomes)}/{len(outcomes)}）；已保存结果、保留布阵，未点击开战')
         report['placements']=order;report['actual_order_validation']=outcomes
         write_json(self.folder/f'plan-{stage}.json',report)
-        self.event('request_order_verified' if outcomes else 'request_order_checked',stage_id=stage,review_mode=self.review_mode)
+        self.event('request_order_verified' if outcomes else 'request_order_checked',stage_id=stage,review_mode=self.review_mode,
+            elapsed_ms=round((time.perf_counter()-started)*1000,1),reused_evaluations=reused)
 
     def verify_roster(self):
         from live_roster import read_live
         from experience import stable_hash
-        current=self.read_account_capture() if getattr(self,'account_key',None) else read_live();before=self.sim.capture
+        started=time.perf_counter()
+        current=self.read_account_capture() if getattr(self,'live',None) or getattr(self,'account_key',None) else read_live();before=self.sim.capture
         def key(capture):return stable_hash(dict(level=capture['shared_level'],pets=sorted(capture['pets'],key=lambda p:p['tid'])))
         if key(current)!=key(before):raise RunStopped('roster_changed','搜索期间角色池或养成已改变；方案和进度已保存，请重新同步后搜索，尚未进行布阵')
+        if hasattr(self,'events'):self.event('roster_verified',elapsed_ms=round((time.perf_counter()-started)*1000,1))
 
     def read_account_capture(self):
+        if getattr(self,'live',None):
+            from live_roster import LiveReadError
+            try:capture=self.live.capture_roster()
+            except LiveReadError:
+                self.relocate();capture=self.live.capture_roster()
+            if self.account_key and capture['account']['key']!=self.account_key:
+                raise RunStopped('account_changed','当前游戏账号与工作台所选账号不同，已停止；请重新同步账号后运行')
+            self.account_key=capture['account']['key'];self.live.account_key=self.account_key
+            return capture
         from live_session import read_sessions
         sessions=read_sessions()
         # Foreground mouse automation still requires one game window. Do not use
@@ -368,26 +431,29 @@ class Runner:
         battle=state.get('battle',{});finished=battle.get('battleID');next_stage=state.get('current_stage_id')
         if battle.get('state')!=4 or battle.get('result')!=1 or next_stage!=next_stage_id(self.catalog,finished):
             raise RuntimeError('不是已确认通关的主线结算，停止输入')
-        # The server advances StageModel before the result view opens. Locate
-        # the newly created view and require actual preparation after clicking.
-        time.sleep(2);self.relocate()
-        try:self.wait(lambda s:s.get('victory',{}).get('isShow') is True,3)
-        except WaitTimeout:
-            # The view may have been allocated after the heap scan started.
-            self.relocate()
-            self.wait(lambda s:s.get('victory',{}).get('isShow') is True,6)
-        time.sleep(2);self.check_stop()
-        if getattr(self,'automatic',False):
-            from auto_layout import continue_button,center
-            import cv2,numpy as np
-            image=self.layout.capture();self.input.set_reference(*image.size)
-            x,y=center(continue_button(cv2.cvtColor(np.asarray(image.convert('RGB')),cv2.COLOR_RGB2BGR)))
-        else:x,y=self.g['continue']
-        self.input.click(x,y)
-        time.sleep(2);self.relocate()
-        advanced=self.wait(lambda s:is_preparing(s,next_stage) or is_chapter(s,next_stage),20)
+        started=time.perf_counter();point=[]
+        def clickable(s):
+            b=s.get('battle',{})
+            if s.get('current_stage_id')!=next_stage or b.get('battleID')!=finished or b.get('state')!=4 or b.get('result')!=1:
+                return False
+            if s.get('victory',{}).get('isShow') is not True:return False
+            if getattr(self,'automatic',False):
+                from auto_layout import continue_button,center,LayoutError
+                import cv2,numpy as np
+                image=self.layout.capture()
+                try:p=center(continue_button(cv2.cvtColor(np.asarray(image.convert('RGB')),cv2.COLOR_RGB2BGR)))
+                except LayoutError:return False
+                self.input.set_reference(*image.size);point[:]=p
+            else:point[:]=self.g['continue']
+            return True
+        # Cached refs usually already contain the victory view. Discover only
+        # when a new view/controller appears, not on every scene transition.
+        self.wait(clickable,9,rediscover=lambda s:not s.get('victory'))
+        self.check_stop();self.input.click(*point)
+        advanced=self.wait(lambda s:self.preparation_ready(s,next_stage) or is_chapter(s,next_stage),20,
+            rediscover=lambda s:not is_preparing(s,next_stage) and not is_chapter(s,next_stage))
         if is_chapter(advanced,next_stage):advanced=self.enter_chapter(advanced,next_stage)
-        self.event('preparation_ready',stage_id=next_stage)
+        self.event('preparation_ready',stage_id=next_stage,transition_ms=round((time.perf_counter()-started)*1000,1))
         return advanced
 
     def run(self):
@@ -443,7 +509,7 @@ def main():
         value=dict(time=datetime.now(timezone.utc).isoformat(),event=event,run_dir=str(folder),completed=[],**data)
         write_json(folder/'status.json',value);write_json(RUNTIME/'autoplay-status.json',value)
     startup_event('initializing')
-    lock=None;locked=False;runner=None
+    lock=None;locked=False;runner=None;controller=ExitStack()
     try:
         lock=(RUNTIME/'autoplay.lock').open('a+b')
         if not lock.tell():lock.write(b'0');lock.flush()
@@ -451,6 +517,11 @@ def main():
         try:msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
         except OSError:raise RuntimeError('已有自动推关进程控制该游戏')
         locked=True
+        sys.path.insert(0,str(Path(__file__).resolve().parents[3]/'src'))
+        from autogame.platforms.lease import device_lease
+        from desktop_input import find_game_window
+        # Keep fishing's existing lease key so older fishing workers also exclude us.
+        controller.enter_context(device_lease('windows-fishing-'+str(find_game_window()),check_processes=False))
         runner=Runner(read_json(a.geometry) if a.geometry else None,a.budget,a.stages,run_dir=folder,
             max_search_seconds=a.seconds,stop_when_verified=not a.optimize_until_limit,review_mode=a.review,account_key=a.account_key);runner.run()
     except Exception as exc:
@@ -461,6 +532,7 @@ def main():
         raise
     finally:
         if runner:runner.live.close()
+        controller.close()
         if locked:lock.seek(0);msvcrt.locking(lock.fileno(),msvcrt.LK_UNLCK,1)
         if lock:lock.close()
 

@@ -4,12 +4,12 @@ from pathlib import Path
 import runpy
 import sys
 
-FEATURES = {name: Path(__file__).resolve().parent / name for name in ('fishing', 'mainline')}
+FEATURES = {name: Path(__file__).resolve().parent / name for name in ('fishing', 'mainline', 'hunting', 'assistant')}
 
 
 def main():
     parser = argparse.ArgumentParser(description='Tata / 塔塔冒险队 game features')
-    parser.add_argument('feature', choices=FEATURES)
+    parser.add_argument('feature', choices=FEATURES, nargs='?', default='assistant')
     parser.add_argument('feature_args', nargs=argparse.REMAINDER,
                         help='Fishing options; put --panel first to open the control panel')
     args = parser.parse_args()
@@ -17,7 +17,8 @@ def main():
     panel = bool(options and options[0] == '--panel')
     if panel:
         options = options[1:]
-    entry = FEATURES[args.feature] / ('panel.py' if panel or args.feature == 'mainline' else 'desktop.py')
+    entry = (Path(__file__).with_name('assistant.py') if args.feature == 'assistant' else
+             FEATURES[args.feature] / ('panel.py' if panel or args.feature == 'mainline' else 'desktop.py'))
     sys.path.insert(0, str(entry.parent))
     sys.argv = [str(entry), *options]
     runpy.run_path(str(entry), run_name='__main__')

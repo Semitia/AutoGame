@@ -1,5 +1,7 @@
 """Read the logged-in Tata WebGL Lua model without modifying the game process."""
 import argparse
+from bisect import bisect_left
+from contextlib import contextmanager
 import ctypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -32,6 +34,15 @@ class LuaHeap:
     """
     def __init__(self, read, size):
         self.read, self.size = read, size
+        self._cache = None
+
+    @contextmanager
+    def cached(self):
+        """Reuse aliases only within one observation; never across readbacks."""
+        previous = self._cache
+        if previous is None:self._cache = ({}, {})
+        try:yield self
+        finally:self._cache = previous
 
     def block(self, offset, size):
         if not isinstance(offset, int) or offset < 0 or size < 0 or offset+size > self.size:
@@ -42,13 +53,17 @@ class LuaHeap:
         return data
 
     def string(self, address):
+        cache=self._cache[0] if self._cache is not None else None
+        if cache is not None and address in cache:return cache[address]
         header = self.block(address, 16)
         if header[4] != 4 or header[7] > 40:
             raise LiveReadError('不支持的 Lua 字符串布局')
         text = self.block(address+16, header[7]+1)
         if text[-1] != 0:
             raise LiveReadError('Lua 字符串边界校验失败')
-        return text[:-1].decode('utf-8', errors='strict')
+        value=text[:-1].decode('utf-8', errors='strict')
+        if cache is not None:cache[address]=value
+        return value
 
     def value(self, data, offset=0, tag=None):
         tag = data[offset+8] if tag is None else tag
@@ -67,6 +82,8 @@ class LuaHeap:
     def table(self, ref):
         if not isinstance(ref, TableRef):
             raise LiveReadError('角色模型字段不是 Lua 表')
+        cache=self._cache[1] if self._cache is not None else None
+        if cache is not None and ref in cache:return cache[ref]
         header = self.block(ref.address, 32)
         if header[4] != 5 or header[7] > 14:
             raise LiveReadError('不支持的 Lua 表布局')
@@ -94,7 +111,20 @@ class LuaHeap:
                 if i+1 in result:
                     raise LiveReadError('Lua 数组键重复')
                 result[i+1] = value
+        if cache is not None:cache[ref]=result
         return result
+
+
+class NodeIndex:
+    """Index exact Lua Node offsets without scanning every candidate per table."""
+    def __init__(self,nodes):
+        self.buckets={}
+        for node in sorted(set(nodes)):self.buckets.setdefault(node%24,[]).append(node)
+
+    def contains(self,base,count):
+        nodes=self.buckets.get(base%24,())
+        index=bisect_left(nodes,base)
+        return index<len(nodes) and nodes[index]<base+24*count
 
 
 def find_pet_models(data):
@@ -111,13 +141,14 @@ def find_pet_models(data):
         pos += 7
     if not nodes:
         return []
+    index=NodeIndex(nodes)
     candidates, pos = [], 0
     while (pos := data.find(b'\x05', pos)) >= 0:
         p, pos = pos-4, pos+1
         if p < 0 or p % 8 or p+32 > len(data) or data[p+7] > 10:
             continue
         node = struct.unpack_from('<I', data, p+16)[0]
-        if not any(node <= q < node+24*(1 << data[p+7]) and (q-node) % 24 == 0 for q in nodes):
+        if not index.contains(node,1 << data[p+7]):
             continue
         ref = TableRef(p)
         try:

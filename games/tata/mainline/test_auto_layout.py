@@ -18,9 +18,12 @@ class AutoLayoutTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.catalog=Catalog();cls.detector=AutoLayout(cls.catalog)
-        cls.state=dict(current_stage_id=566,field_offset=dict(x=-2.492,y=-5.188),
+        cls.state=dict(current_stage_id=826,field_offset=dict(x=-2.492,y=-5.188),
                        prepare={'_currentPrepareListRowCount':2},pet_list=list(range(1,15)))
-        source=cv2.imread(str(RUNTIME/'art/txsc_battlescene_bg_08.png'))
+        # Use a bundled map so clean checkouts need no old computer's cache.
+        stage=cls.catalog.stage(cls.state['current_stage_id'])
+        reference=cls.catalog.battle_resources[str(stage['battle']['ResID'])]['BackgroundRes']
+        source=cv2.imread(str(cls.detector.image_path(reference)))
         cls.matrix=np.array([[.8,0,-105],[0,.8,-340]],dtype=float)
         background=cv2.warpAffine(source,cls.matrix,(856,1568))
         image=Image.fromarray(cv2.cvtColor(background,cv2.COLOR_BGR2RGB));draw=ImageDraw.Draw(image)
@@ -67,6 +70,15 @@ class AutoLayoutTests(unittest.TestCase):
             found=self.detector.locate_card(image,self.state,1,pets,geometry=geometry)
         np.testing.assert_allclose(found['point'],[98.5,1071],atol=4)
 
+    def test_filter_model_cannot_click_a_previous_frame_different_portrait(self):
+        pets={uid:dict(evoTID=1) for uid in self.state['pet_list']}
+        geometry=self.detector.recognize(self.image,self.state)
+        state=dict(self.state,pet_list=[1,2])
+        self.assertIn('point',self.detector.locate_card(self.image,state,1,pets,geometry=geometry))
+        state=dict(self.state,pet_list=[13,14])
+        with self.assertRaisesRegex(LayoutError,'筛选一致'):
+            self.detector.locate_card(self.image,state,13,pets,geometry=geometry)
+
     def test_blank_or_wrong_screen_is_rejected_without_guessed_coordinates(self):
         with self.assertRaises(LayoutError):self.detector.recognize(Image.new('RGB',(856,1568),'white'),self.state)
         state=dict(self.state,field_offset={})
@@ -92,13 +104,39 @@ class AutoLayoutTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name=='nt','Windows point transport')
 class WindowAdaptationTests(unittest.TestCase):
+    def test_fast_gesture_retains_segmented_drag_and_always_releases_on_failure(self):
+        import desktop_input as transport
+        game=transport.GameInput.__new__(transport.GameInput)
+        game.window=SimpleNamespace(bounds=lambda:(0,0,400,750));game.gesture_bounds=None
+        game.point=lambda x,y:SimpleNamespace(x=x,y=y)
+        buttons=[];moves=[];sleeps=[]
+        game.button=buttons.append;game.stop_check=lambda:None
+        fake=SimpleNamespace(SetCursorPos=lambda x,y:moves.append((x,y)))
+        with patch.object(transport,'user',fake),patch.object(transport.time,'sleep',side_effect=sleeps.append):
+            game.drag(10,20,70,80)
+        self.assertEqual(buttons,[True,False])
+        self.assertEqual(moves[-1],(70,80))
+        self.assertEqual(len(moves),13)
+        self.assertAlmostEqual(sum(sleeps),.23)
+        buttons.clear()
+        checks=iter([None,RuntimeError('游戏失去前台')])
+        def check():
+            error=next(checks)
+            if error:raise error
+        game.stop_check=check
+        with patch.object(transport,'user',fake),patch.object(transport.time,'sleep'):
+            with self.assertRaisesRegex(RuntimeError,'失去前台'):game.drag(10,20,70,80)
+        self.assertEqual(buttons,[True,False])
+        self.assertIsNone(game.gesture_bounds)
+
     def test_default_cli_uses_automatic_recognition_without_a_geometry_file(self):
         from autoplay import main
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             runner=SimpleNamespace(run=lambda:None,live=SimpleNamespace(close=lambda:None))
             with patch('sys.argv',['autoplay','--stages','1','--run-dir',str(root)]),patch('autoplay.RUNTIME',root),\
-                 patch('autoplay.Runner',return_value=runner) as create,patch('msvcrt.locking'):
+                 patch('autoplay.Runner',return_value=runner) as create,patch('msvcrt.locking'),\
+                 patch('desktop_input.find_game_window',return_value=123):
                 main()
             self.assertIsNone(create.call_args.args[0])
 

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from live_roster import (LuaHeap, TableRef, LiveReadError, find_pet_models,
+from live_roster import (LuaHeap, TableRef, LiveReadError, find_pet_models, NodeIndex,
                          extract_model, to_roster, read_live)
 from model import load_roster, write_json
 from test_workbench import catalog
@@ -49,6 +49,30 @@ def capture():
 
 
 class LiveRosterTests(unittest.TestCase):
+    def test_node_index_preserves_exact_alignment_and_range(self):
+        nodes=[8,32,80,104,120,121,121]
+        index=NodeIndex(nodes)
+        for base in range(130):
+            for count in range(5):
+                expected=any(base<=q<base+24*count and (q-base)%24==0 for q in nodes)
+                self.assertEqual(index.contains(base,count),expected)
+
+    def test_observation_cache_expires_and_separate_checks_really_reread(self):
+        f=Fixture();ref=f.table({'value':1});reads=[]
+        def read(p,n):reads.append((p,n));return bytes(f.data[p:p+n])
+        heap=LuaHeap(read,len(f.data))
+        with heap.cached():
+            self.assertEqual(heap.table(ref)['value'],1)
+            count=len(reads)
+            with heap.cached():self.assertEqual(heap.table(ref)['value'],1)
+            self.assertEqual(len(reads),count)
+        node=struct.unpack_from('<I',f.data,ref.address+16)[0]
+        f.data[node:node+9]=f.value(2)[:9]
+        with heap.cached():self.assertEqual(heap.table(ref)['value'],2)
+        self.assertGreater(len(reads),count)
+        with self.assertRaises(RuntimeError),heap.cached():raise RuntimeError('aborted read')
+        self.assertIsNone(heap._cache)
+
     def test_owned_model_before_encyclopedia_adds_isget_flag(self):
         f=Fixture();root=f.model();heap=f.heap()
         pet=heap.table(heap.table(heap.table(root)['pets'])[1])

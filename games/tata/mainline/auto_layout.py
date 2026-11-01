@@ -183,12 +183,25 @@ class AutoLayout:
         ids=state['pet_list'];index=ids.index(uid)
         lines=card_frames(frame,fy,min(rows,len(ids)))
         columns=min(map(len,lines))
-        if len(ids)<=columns*rows:
-            return dict(point=center(lines[index%rows][index//rows]))
         top=min(r[1] for line in lines for r in line)
         bottom=max(r[1]+r[3] for line in lines for r in line)
         gray=cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
         features=self.sift.detectAndCompute(gray[top:bottom],None)
+        # Model filters can update before the next rendered frame. Confirm the
+        # target portrait instead of compensating with a fixed post-click delay.
+        pet=pets.get(uid)
+        if pet is None:raise LayoutError('缺少目标塔塔的当前形态，未点击')
+        ref=self.catalog.resource(uid,pet['evoTID'])['IconName']
+        target=self.match(self.image_path(ref),features,minimum=6)
+        if target is not None:
+            matrix,_,shape=target
+            point=matrix@np.array([shape[1]/2,shape[0]/2,1]);point[1]+=top
+            for col,rect in enumerate(lines[index%rows]):
+                x,y,rw,rh=rect
+                if x<=point[0]<=x+rw and y<=point[1]<=y+rh:
+                    if len(ids)>columns*rows or col==index//rows:return dict(point=center(rect))
+        if len(ids)<=columns*rows:
+            raise LayoutError('目标卡片画面尚未与当前筛选一致，等待下一帧')
         votes=[]
         for candidate in ids:
             pet=pets.get(candidate)

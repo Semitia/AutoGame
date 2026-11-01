@@ -15,8 +15,9 @@ from widgets import Art, Gallery, BattleBoard, ScrollArea, StarPicker, draw_star
 
 
 class MainlinePanel:
-    def __init__(self, root, catalog, state=RUNTIME/'roster.json', initial_stage=None, profile_store=None, auto_sync=True):
+    def __init__(self, root, catalog, state=RUNTIME/'roster.json', initial_stage=None, profile_store=None, auto_sync=True, *, embedded=False, before_autoplay=None):
         self.root, self.catalog, self.state = root, catalog, Path(state)
+        self.before_autoplay=before_autoplay
         self.profiles=profile_store
         if self.profiles is None and self.state == RUNTIME/'roster.json':
             from profiles import Profiles
@@ -47,10 +48,11 @@ class MainlinePanel:
         except (OSError,ValueError,KeyError,TypeError):pass
         self.run_status=tk.StringVar(value='尚未启动。可只做本地搜索；时长/候选上限填0表示不限。')
         self.last_job_status={};self.last_job_dir=None
-        root.title('Tata · 图鉴与地图布阵'); root.configure(bg=BG)
-        root.protocol('WM_DELETE_WINDOW',self.close)
-        width, height = min(1280,root.winfo_screenwidth()-70), min(820,root.winfo_screenheight()-100)
-        root.geometry(f'{width}x{height}'); root.minsize(min(1050,width),min(660,height))
+        if not embedded:
+            root.title('Tata · 图鉴与地图布阵'); root.configure(bg=BG)
+            root.protocol('WM_DELETE_WINDOW',self.close)
+            width, height = min(1280,root.winfo_screenwidth()-70), min(820,root.winfo_screenheight()-100)
+            root.geometry(f'{width}x{height}'); root.minsize(min(1050,width),min(660,height))
         self.level = tk.StringVar(value='1'); self.query = tk.StringVar()
         self.status = tk.StringVar(value='点图片编辑；卡片底部切换拥有。所有塔塔共享等级。')
         self.element = self.career = None; self.owned_only = tk.BooleanVar(value=False)
@@ -668,6 +670,7 @@ class MainlinePanel:
     def start_autoplay(self):
         from autoplay import STOP
         if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:return
+        if self.before_autoplay:self.before_autoplay()
         if getattr(self,'combat_process',None) is not None and self.combat_process.poll() is None:raise ValueError('请等待当前本地模拟完成')
         count=int(self.autoplay_count.get());budget,seconds=self.configured_limits()
         if not 1<=count<=100:raise ValueError('关卡数应为1–100')

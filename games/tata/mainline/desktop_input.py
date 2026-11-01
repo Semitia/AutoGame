@@ -107,7 +107,7 @@ class GameInput:
         down=False
         try:
             p=self.point(x,y);user.SetCursorPos(p.x,p.y);self.button(True);down=True
-            time.sleep(.075);self.stop_check()
+            time.sleep(.035);self.stop_check()
         finally:
             if down:self.button(False)
             self.gesture_bounds=None
@@ -116,13 +116,13 @@ class GameInput:
         self.gesture_bounds=self.window.bounds();down=False
         try:
             start=self.point(from_x,from_y);end=self.point(to_x,to_y)
-            user.SetCursorPos(start.x,start.y);time.sleep(.05);self.stop_check();self.button(True);down=True
-            time.sleep(.14)
-            for i in range(1,25):
+            user.SetCursorPos(start.x,start.y);self.stop_check();self.button(True);down=True
+            time.sleep(.09)
+            for i in range(1,13):
                 self.stop_check()
-                user.SetCursorPos(round(start.x+(end.x-start.x)*i/24),round(start.y+(end.y-start.y)*i/24))
-                time.sleep(.018)
-            time.sleep(.06)
+                user.SetCursorPos(round(start.x+(end.x-start.x)*i/12),round(start.y+(end.y-start.y)*i/12))
+                time.sleep(.01)
+            time.sleep(.02)
         finally:
             if down:self.button(False)
             self.gesture_bounds=None

@@ -12,7 +12,9 @@
 
 `run.py` 通过显式游戏注册表分发。当前游戏仍直接使用 MuMu 适配器以及 Windows 文件锁；这次迁移没有宣称已完成跨平台通用调度器。
 
-`games/tata/` 按游戏组织 Windows 微信里的塔塔冒险队功能，当前 `fishing/` 提供钓鱼控制面板、视觉识别和预判输入。`python run.py tata fishing` 由游戏入口分发到该子功能；运行产物统一写入 `runtime/tata/fishing/`，识别模板与测试截图保留在功能目录。现有 `Start-Fishing.cmd` / `Stop-Fishing.cmd` 是该功能的桌面入口。
+`games/tata/assistant.py` 是 Tata 专用统一窗口，`python run.py tata` 默认打开，嵌入主线、钓鱼和围猎面板。面板仍管理各自独立的工作进程、日志和本地状态；主线图鉴、地图、账号档案及各模式识别逻辑继续归各功能维护。统一层仅协调导航、状态、停止和输入冲突，未抽象为跨游戏框架。
+
+Tata 主线 autoplay、fishing worker 和 hunting worker 共用 `device_lease` 的窗口锁（兼容已有钓鱼锁键 `windows-fishing-<hwnd>`），获取控制权后才聚焦游戏。独立命令和面板同样受锁约束；纯本地模拟和只读同步无需持有输入锁。运行产物分别写入 `runtime/tata/mainline/`、`runtime/tata/fishing/` 与 `runtime/tata/hunting/`。
 
 ## 添加游戏
 
