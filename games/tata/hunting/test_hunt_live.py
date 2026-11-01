@@ -42,6 +42,16 @@ def set_field(f,ref,key,value):
 
 
 class LiveTests(unittest.TestCase):
+    def test_same_scene_storage_alias_is_collapsed_but_distinct_scene_is_rejected(self):
+        live,f,refs=fixture();original=live.refs['ed.TrapBattleScene'][0]
+        alias=f.table({})
+        f.data[alias.address:alias.address+32]=f.data[original.address:original.address+32]
+        live.refs['ed.TrapBattleScene'].append(alias)
+        self.assertEqual(live.snapshot()['screen'],'room')
+        duplicate=f.table(live.heap.table(original))
+        live.refs['ed.TrapBattleScene'].append(duplicate)
+        with self.assertRaisesRegex(LiveReadError,'场景不唯一'):live.snapshot()
+
     def test_collected_lobby_does_not_break_active_room_but_missing_room_never_allows_input(self):
         live,f,_=fixture();ref=live.refs['ed.TrapMainView'][0]
         f.data[ref.address+4]=0
@@ -103,4 +113,4 @@ class LiveTests(unittest.TestCase):
 
     def test_original_bytecode_functions_confirm_strategy_dependencies(self):
         from verify_logic import verify
-        report=verify();self.assertEqual(report['passed'],16);self.assertFalse(report['game_input'])
+        report=verify();self.assertEqual(report['passed'],18);self.assertFalse(report['game_input'])

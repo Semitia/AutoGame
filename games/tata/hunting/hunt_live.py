@@ -27,9 +27,9 @@ def present(heap,ref,key):
 
 
 class HuntLive:
-    def __init__(self):
+    def __init__(self,pids=None):
         found=[];self.reader=None;self.account=None
-        for pid in renderer_pids():
+        for pid in (renderer_pids() if pids is None else pids):
             reader=WindowsReader(pid)
             try:
                 for base,size in reader.heaps():
@@ -60,7 +60,7 @@ class HuntLive:
                 if self.heap.table(t.get('class')).get('__cname')!=name:
                     raise LiveReadError('围猎对象已回收，请重新定位')
             except LiveReadError:
-                if not view:raise
+                if not view and name!='ed.TrapBattleScene':raise
                 # Closed lobby/reward views can be collected during a room.
                 # An invalid view cannot establish an active input context.
                 self.refs[name]=[r for r in self.refs[name] if r!=ref]
@@ -76,6 +76,18 @@ class HuntLive:
         found=self.objects(name)
         if len(found)!=1:raise LiveReadError('需要唯一模型：'+name)
         return found[0][1]
+
+    def scenes(self):
+        # Heap discovery can find copied table headers sharing the exact same
+        # Lua storage. They are aliases, not separate scene instances. Collapse
+        # only identical storage and contents; genuinely distinct scenes fail.
+        found=[];storage={}
+        for ref,table in self.objects('ed.TrapBattleScene'):
+            if table.get('isUnLoad') is True or not present(self.heap,ref,'sceneRoot'):continue
+            signature=self.heap.block(ref.address,32)[7:20]
+            if signature in storage and storage[signature]==table:continue
+            storage[signature]=table;found.append((ref,table))
+        return found
 
     def snapshot(self):
         # The room can remove/reset a pooled enemy after its table reference
@@ -136,7 +148,7 @@ class HuntLive:
             if h.table(own.get('class')).get('__cname')!='ed.TrapBattlePlayerData':raise LiveReadError('围猎玩家模型不匹配')
             if h.table(own.get('_player')).get('uid')!=uid:raise LiveReadError('围猎玩家身份不一致')
             effect=h.table(own.get('effectFlag'))
-            scenes=[entry for entry in self.objects('ed.TrapBattleScene') if present(h,entry[0],'sceneRoot')]
+            scenes=self.scenes()
             if len(scenes)!=1:raise LiveReadError('围猎场景不唯一或尚未加载')
             actors=h.table(scenes[0][1].get('_enemyActors'));units=h.table(room.get('_units'));enemies=[]
             for id,ref in units.items():
@@ -147,13 +159,15 @@ class HuntLive:
                     raise EnemyReadRace(f"围猎敌人身份校验失败：索引{id}，实例{data.get('_unitID')}，配置{data.get('_unitTid')}")
                 if data.get('_unitTid') not in self.scores:
                     raise LiveReadError(f"围猎敌人身份校验失败：索引{id}，实例{data.get('_unitID')}，配置{data.get('_unitTid')}")
-                actor_ref=actors.get(id);active=False
+                actor_ref=actors.get(id);active=False;position={}
                 if isinstance(actor_ref,TableRef):
                     actor=h.table(actor_ref)
                     if (h.table(actor.get('class')).get('__cname')=='ed.TrapEnemyActor' and actor.get('enemyData')==ref
-                        and actor.get('isActive') is True and present(h,actor_ref,'node')):active=True
+                        and actor.get('isActive') is True and present(h,actor_ref,'node')):
+                        active=True
+                        position=dict(x=actor.get('_x'),y=actor.get('_y'),radius=actor.get('_collisionRadius'))
                 enemies.append(dict(id=id,tid=data['_unitTid'],spawn_time=data['_spawnTime'],
-                    exit_time=data['_exitTime'],active=active,score=self.scores[data['_unitTid']]))
+                    exit_time=data['_exitTime'],active=active,score=self.scores[data['_unitTid']],**position))
             s.update(screen='room',room_token=[room.get('_roomID'),room.get('_roomCreateTs'),dungeon['id']],
                 multiplier=dungeon['multiplier'],lock_active=effect.get('lock') is True,
                 rage_active=effect.get('angry') is True,lock_target=own.get('_lockTargetID',0),enemies=enemies)

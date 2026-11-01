@@ -21,6 +21,15 @@ def lobby(locks=10):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_refill_goal_does_not_send_remaining_locks_back_to_farm(self):
+        p=Policy(Options(stock=10));s=lobby(locks=4);s['selected_dungeon']=8
+        self.assertEqual(p.decide(s),dict(kind='enter',dungeon=8))
+        self.assertEqual(p.mode,'hunt')
+        self.assertEqual(p.decide(room(200,locks=3))['kind'],'wait')
+        self.assertEqual(p.decide(room(200,locks=1))['kind'],'wait')
+        self.assertEqual(p.decide(room(200,locks=0))['kind'],'exit')
+        self.assertEqual(p.mode,'farm')
+
     def test_fish_acceptance_uses_two_times_room_and_actual_game_target_priority(self):
         p=Policy(Options(test_fish=True));s=lobby(locks=1)
         self.assertEqual(p.decide(s)['kind'],'next')
@@ -37,13 +46,14 @@ class PolicyTests(unittest.TestCase):
             Policy(Options(test_fish=True)).decide(room(2,0))
 
     def test_low_room_uses_rage_and_fires_without_spending_locks(self):
-        p=Policy(Options());state=room(1,locks=0)
+        p=Policy(Options());state=room(1,locks=0,enemies=[enemy(tid=2001,score=100)])
         self.assertEqual(p.decide(state)['kind'],'rage')
         state['rage_active']=True;self.assertEqual(p.decide(state)['kind'],'fire')
-        p=Policy(Options(use_rage=False));self.assertEqual(p.decide(room(1,0))['kind'],'fire')
+        p=Policy(Options(use_rage=False));self.assertEqual(p.decide(room(1,0,enemies=[enemy(tid=2001,score=100)]))['kind'],'fire')
+        self.assertEqual(p.decide(room(1,0))['kind'],'wait')
 
     def test_stock_threshold_exits_low_and_selects_200(self):
-        p=Policy(Options(stock=3));self.assertEqual(p.decide(room(1,2))['kind'],'rage')
+        p=Policy(Options(stock=3));self.assertEqual(p.decide(room(1,2,enemies=[enemy(tid=2001,score=100)]))['kind'],'rage')
         self.assertEqual(p.decide(room(1,3))['kind'],'exit')
         state=lobby(3);self.assertEqual(p.decide(state)['kind'],'next')
         state['selected_dungeon']=8;self.assertEqual(p.decide(state),dict(kind='enter',dungeon=8))
@@ -93,9 +103,13 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(p.decide(s)['finish'])
 
     def test_entry_requires_unlock_and_actual_entry_balance(self):
-        for change in (dict(total_bullets=0),dict(bullets=89999)):
+        for change in (dict(total_bullets=0),):
             p=Policy(Options());s=lobby();s.update(change)
             with self.assertRaises(ValueError):p.decide(s)
+        p=Policy(Options());s=lobby();s['bullets']=89999
+        s['selected_dungeon']=8;s['bullets']=40000
+        self.assertEqual(p.decide(s),dict(kind='enter',dungeon=8))
+        self.assertEqual(p.mode,'hunt')
 
     def test_empty_locks_refill_and_unknown_room_is_exited(self):
         p=Policy(Options());s=room(200,0)

@@ -15,13 +15,17 @@ from widgets import Art, Gallery, BattleBoard, ScrollArea, StarPicker, draw_star
 
 
 class MainlinePanel:
-    def __init__(self, root, catalog, state=RUNTIME/'roster.json', initial_stage=None, profile_store=None, auto_sync=True, *, embedded=False, before_autoplay=None):
+    def __init__(self, root, catalog, state=RUNTIME/'roster.json', initial_stage=None, profile_store=None, auto_sync=True, *, embedded=False, before_autoplay=None,hwnd=None):
         self.root, self.catalog, self.state = root, catalog, Path(state)
         self.before_autoplay=before_autoplay
+        self.bound_hwnd=hwnd
+        self.sync_root=RUNTIME/'windows'/str(hwnd) if hwnd is not None else RUNTIME
         self.profiles=profile_store
         if self.profiles is None and self.state == RUNTIME/'roster.json':
             from profiles import Profiles
-            self.profiles=Profiles()
+            self.profiles=Profiles(local_selection=hwnd is not None)
+            if hwnd is not None:self.state=self.sync_root/'unbound-roster.json'
+        if hwnd is not None and self.profiles and not self.profiles.active:self.state=self.sync_root/'unbound-roster.json'
         workspace={}
         if self.profiles and self.profiles.active:
             self.state=self.profiles.folder(self.profiles.active)/'roster.json'
@@ -40,7 +44,7 @@ class MainlinePanel:
         self.review_choice=tk.StringVar(value=LABELS['light'])
         try:
             from job_status import search_limits
-            settings=json.loads((RUNTIME/'search-options.json').read_text(encoding='utf-8'))
+            settings=json.loads((self.sync_root/'search-options.json').read_text(encoding='utf-8'))
             search_limits(settings['candidates'],settings['minutes'])
             self.search_budget.set(str(settings['candidates']));self.search_minutes.set(str(settings['minutes']))
             self.stop_on_success.set(bool(settings['stop_on_success']))
@@ -584,7 +588,7 @@ class MainlinePanel:
     def configured_limits(self):
         from job_status import search_limits
         limits=search_limits(self.search_budget.get(),self.search_minutes.get())
-        write_json(RUNTIME/'search-options.json',dict(candidates=self.search_budget.get(),minutes=self.search_minutes.get(),stop_on_success=self.stop_on_success.get(),review_mode=self.review_mode()))
+        write_json(self.sync_root/'search-options.json',dict(candidates=self.search_budget.get(),minutes=self.search_minutes.get(),stop_on_success=self.stop_on_success.get(),review_mode=self.review_mode()))
         return limits
 
     def review_mode(self):
@@ -674,13 +678,16 @@ class MainlinePanel:
         if getattr(self,'combat_process',None) is not None and self.combat_process.poll() is None:raise ValueError('请等待当前本地模拟完成')
         count=int(self.autoplay_count.get());budget,seconds=self.configured_limits()
         if not 1<=count<=100:raise ValueError('关卡数应为1–100')
-        STOP.unlink(missing_ok=True)
+        self.autoplay_stop_file=RUNTIME/'windows'/str(self.bound_hwnd)/'AUTOPLAY-STOP' if self.bound_hwnd is not None else STOP
+        self.autoplay_stop_file.unlink(missing_ok=True)
         folder=RUNTIME/'autoplay-ui'/uuid.uuid4().hex;folder.mkdir(parents=True,exist_ok=True)
         self.autoplay_run_dir=folder
         self.last_job_dir=folder
         self.autoplay_log=(folder/'run.log').open('w',encoding='utf-8')
         args=[sys.executable,'-X','utf8',str(Path(__file__).with_name('autoplay.py')),'--stages',str(count),'--budget',str(budget),'--seconds',str(seconds),'--run-dir',str(folder)]
         args+=['--review',self.review_mode()]
+        args+=['--stop-file',str(self.autoplay_stop_file)]
+        if self.bound_hwnd is not None:args+=['--hwnd',str(self.bound_hwnd)]
         if self.profiles and self.profiles.active and self.profiles.active!='unbound':args+=['--account-key',self.profiles.active]
         if not self.stop_on_success.get():args+=['--optimize-until-limit']
         try:self.autoplay_process=subprocess.Popen(args,stdout=self.autoplay_log,stderr=subprocess.STDOUT,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
@@ -707,7 +714,8 @@ class MainlinePanel:
 
     def stop_autoplay(self):
         from autoplay import STOP
-        STOP.parent.mkdir(parents=True,exist_ok=True);STOP.write_text('用户停止\n',encoding='utf-8')
+        stop=getattr(self,'autoplay_stop_file',STOP)
+        stop.parent.mkdir(parents=True,exist_ok=True);stop.write_text('用户停止\n',encoding='utf-8')
         self.status.set('已发送停止请求；游戏战斗本身会继续结算，工具不再输入。')
 
     def close(self):
@@ -751,12 +759,13 @@ class MainlinePanel:
     def sync_live(self,background=False):
         if getattr(self,'autoplay_process',None) is not None and self.autoplay_process.poll() is None:raise ValueError('自动推关会逐关同步，请先停止再编辑角色池')
         if getattr(self,'live_process',None) is not None and self.live_process.poll() is None:return
-        RUNTIME.mkdir(parents=True,exist_ok=True)
-        self.live_output=RUNTIME/('sessions.json' if self.profiles else 'live-capture.json')
+        self.sync_root.mkdir(parents=True,exist_ok=True)
+        self.live_output=self.sync_root/('sessions.json' if self.profiles else 'live-capture.json')
         self.live_generation=self._profile_generation
-        self.live_log=(RUNTIME/'live-sync.log').open('w',encoding='utf-8')
+        self.live_log=(self.sync_root/'live-sync.log').open('w',encoding='utf-8')
         args=[sys.executable,'-X','utf8',str(Path(__file__).with_name('live_session.py' if self.profiles else 'live_roster.py')),
               '--data',str(self.catalog.data),'--dataset',str(self.catalog.dataset),'--out',str(self.live_output)]
+        if self.bound_hwnd is not None:args+=['--hwnd',str(self.bound_hwnd)]
         try:
             self.live_process=subprocess.Popen(args,stdout=self.live_log,stderr=subprocess.STDOUT,
                 creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
@@ -783,7 +792,7 @@ class MainlinePanel:
         if self.live_process.poll() is None:self.root.after(300,self.poll_live);return
         self.live_log.close();self.live_button.configure(state='normal')
         if self.live_process.returncode:
-            detail=(RUNTIME/'live-sync.log').read_text(encoding='utf-8').strip()
+            detail=(self.sync_root/'live-sync.log').read_text(encoding='utf-8').strip()
             if self.profiles:self.account_status.set(detail[-300:])
             self.status.set('同步暂不可用，保留本地账号与关卡：'+detail[-300:]);return
         value=json.loads(self.live_output.read_text(encoding='utf-8'))
@@ -821,6 +830,10 @@ def main():
     parser.add_argument('--state',type=Path,default=RUNTIME/'roster.json')
     parser.add_argument('--stage');parser.add_argument('--simulation',type=Path)
     args=parser.parse_args(); root=tk.Tk()
+    if args.data==DATA and args.dataset==DATASET and args.state==RUNTIME/'roster.json' and not args.stage and not args.simulation:
+        sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+        from assistant import MultiAccountAssistant
+        app=MultiAccountAssistant(root,initial_page='mainline');root.mainloop();return
     try:
         if args.data == DATA and args.dataset == DATASET:
             from resources import ensure_default_resources

@@ -3,6 +3,7 @@ import argparse
 from contextlib import ExitStack
 from datetime import datetime,timezone
 import json
+import os
 import math
 import sys
 from pathlib import Path
@@ -84,13 +85,20 @@ def is_chapter(state,stage=None):
 
 
 class Runner:
-    def __init__(self,geometry=None,budget=40,max_stages=5,run_dir=None,stop_path=STOP,max_search_seconds=600,stop_when_verified=True,review_mode='light',account_key=None):
+    def __init__(self,geometry=None,budget=40,max_stages=5,run_dir=None,stop_path=STOP,max_search_seconds=600,stop_when_verified=True,review_mode='light',account_key=None,hwnd=None,background=False):
         from desktop_input import GameInput
         from live_battle import LiveBattle
         self.automatic=geometry is None or geometry.get('schema_version')==3
         geometry=geometry or dict(width=400,height=750)
         self.g=geometry;self.budget=budget;self.max_stages=max_stages;self.stop_path=Path(stop_path)
         self.account_key=account_key
+        self.pids=None
+        if hwnd is not None or background:
+            sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+            from windows_runtime import window_pids,background_input
+            from desktop_input import find_game_window
+            hwnd=find_game_window(hwnd) if hwnd is not None else find_game_window()
+            self.pids=window_pids(hwnd)
         if geometry.get('schema_version')==2:
             from calibration import validate_geometry
             validate_geometry(geometry)
@@ -98,13 +106,21 @@ class Runner:
         self.max_search_seconds=max_search_seconds;self.stop_when_verified=stop_when_verified
         review_seeds(review_mode);self.review_mode=review_mode
         self.folder=Path(run_dir or RUNTIME/'autoplay-runs'/uuid.uuid4().hex);self.folder.mkdir(parents=True,exist_ok=True)
-        self.catalog=Catalog();self.input=GameInput(geometry['width'],geometry['height'],adaptive=self.automatic)
+        self.catalog=Catalog()
+        self.input=background_input(hwnd,geometry['width'],geometry['height'],self.automatic) if background else GameInput(geometry['width'],geometry['height'],adaptive=self.automatic,hwnd=hwnd)
+        self.status_root=RUNTIME/'windows'/str(hwnd) if hwnd is not None else RUNTIME
         if not self.automatic and geometry.get('physical_size') and tuple(geometry['physical_size'])!=self.input.initial_dimensions:
             raise RuntimeError('窗口尺寸与已验证配置不同，请重新校准后运行')
-        self.live=LiveBattle(account_key=account_key);self.input.focus();self.completed=[];self.events=[]
+        self.live=LiveBattle(account_key=account_key,pids=self.pids)
+        if not background:self.input.focus()
+        self.completed=[];self.events=[]
         if self.automatic:
             from auto_layout import AutoLayout
             self.layout=AutoLayout(self.catalog);self.layout_signature=None
+            if background:self.layout.capture=self.input.capture
+            elif hwnd is not None:
+                from calibration import capture_visible_game
+                self.layout.capture=lambda:capture_visible_game(hwnd=hwnd)
             state=self.live.snapshot()
             if state.get('battle',{}).get('state')==1:self.refresh_layout(state)
 
@@ -115,13 +131,15 @@ class Runner:
         image=self.layout.capture();geometry=self.layout.recognize(image,state)
         self.input.set_reference(geometry['width'],geometry['height'])
         self.g=geometry;self.layout_signature=signature
-        write_json(GEOMETRY,geometry)
+        write_json(self.folder/'geometry.json',geometry)
         self.event('layout_recognized',width=geometry['width'],height=geometry['height'],map_inliers=geometry['map_inliers'])
 
     def event(self,kind,**data):
-        row=dict(time=datetime.now(timezone.utc).isoformat(),event=kind,**data)
+        row=dict(time=datetime.now(timezone.utc).isoformat(),event=kind,pid=os.getpid(),
+            stop_file=str(self.stop_path.resolve()),**data)
         value=dict(**row,run_dir=str(self.folder),completed=self.completed)
-        write_json(self.folder/'status.json',value);write_json(RUNTIME/'autoplay-status.json',value)
+        write_json(self.folder/'status.json',value);write_json(getattr(self,'status_root',RUNTIME)/'autoplay-status.json',value)
+        write_json(getattr(self,'status_root',RUNTIME)/'status.json',value)
         if kind=='searching' and data.get('search',{}).get('status')=='searching':
             now=time.monotonic()
             if now-getattr(self,'_search_log_time',float('-inf'))<10:return
@@ -156,7 +174,7 @@ class Runner:
             return
         except (LiveReadError,OSError):self.live.close()
         from live_battle import LiveBattle
-        self.live=LiveBattle(account_key=getattr(self,'account_key',None))
+        self.live=LiveBattle(account_key=getattr(self,'account_key',None),pids=getattr(self,'pids',None))
 
     def wait(self,predicate,timeout=15,*,rediscover=False):
         from live_roster import LiveReadError
@@ -500,6 +518,9 @@ def main():
     p.add_argument('--optimize-until-limit',action='store_true',help='找到通过方案后仍继续优化到上限')
     p.add_argument('--review',choices=MODES,default='light',help='复核方式：light默认轻量，none关闭模拟复核，full完整')
     p.add_argument('--account-key',help='绑定工作台当前账号，切换游戏账号时停止')
+    p.add_argument('--hwnd',type=int,help='双开时明确指定游戏窗口')
+    p.add_argument('--foreground',action='store_true',help='改用前台系统鼠标；默认后台窗口输入')
+    p.add_argument('--stop-file',type=Path)
     p.add_argument('--run-dir',type=Path);a=p.parse_args()
     if not 1<=a.stages<=100 or a.budget<0 or not math.isfinite(a.seconds) or a.seconds<0:p.error('关卡数1–100；候选/时长上限非负，0不限')
     import msvcrt
@@ -511,7 +532,11 @@ def main():
     startup_event('initializing')
     lock=None;locked=False;runner=None;controller=ExitStack()
     try:
-        lock=(RUNTIME/'autoplay.lock').open('a+b')
+        from desktop_input import find_game_window
+        hwnd=find_game_window(a.hwnd) if a.hwnd is not None else find_game_window()
+        if a.stop_file is None:
+            a.stop_file=RUNTIME/'windows'/str(hwnd)/'AUTOPLAY-STOP';a.stop_file.unlink(missing_ok=True)
+        lock=(RUNTIME/f'autoplay-{hwnd}.lock').open('a+b')
         if not lock.tell():lock.write(b'0');lock.flush()
         lock.seek(0)
         try:msvcrt.locking(lock.fileno(),msvcrt.LK_NBLCK,1)
@@ -519,11 +544,11 @@ def main():
         locked=True
         sys.path.insert(0,str(Path(__file__).resolve().parents[3]/'src'))
         from autogame.platforms.lease import device_lease
-        from desktop_input import find_game_window
         # Keep fishing's existing lease key so older fishing workers also exclude us.
-        controller.enter_context(device_lease('windows-fishing-'+str(find_game_window()),check_processes=False))
+        controller.enter_context(device_lease('windows-fishing-'+str(hwnd),check_processes=False))
         runner=Runner(read_json(a.geometry) if a.geometry else None,a.budget,a.stages,run_dir=folder,
-            max_search_seconds=a.seconds,stop_when_verified=not a.optimize_until_limit,review_mode=a.review,account_key=a.account_key);runner.run()
+            max_search_seconds=a.seconds,stop_when_verified=not a.optimize_until_limit,review_mode=a.review,account_key=a.account_key,
+            hwnd=hwnd,background=not a.foreground,stop_path=a.stop_file);runner.run()
     except Exception as exc:
         from job_status import error_code
         data=dict(reason=str(exc),reason_code=getattr(exc,'code',None) or error_code(exc))

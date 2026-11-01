@@ -40,7 +40,9 @@ class Layout:
         # Common close variants tint the same X white or red. Match its shape.
         white=cv2.inRange(hsv,(0,0,165),(180,125,255))
         red=cv2.inRange(hsv,(0,120,130),(12,255,255))|cv2.inRange(hsv,(170,120,130),(180,255,255))
-        mask=white|red;x0=int(w*.25);y0=int(h*.90);roi=mask[y0:,x0:int(w*.75)]
+        # WeChat may letterbox the Unity canvas inside a taller client area.
+        # Search the lower canvas as well as the window bottom, by X shape.
+        mask=white|red;x0=int(w*.25);y0=int(h*.78);roi=mask[y0:,x0:int(w*.75)]
         raw=self.templates['close'];alpha=(raw[:,:,3]>190).astype(np.uint8)*255
         ys,xs=np.where(alpha>0);alpha=alpha[ys.min():ys.max()+1,xs.min():xs.max()+1]
         best=(-1,None)

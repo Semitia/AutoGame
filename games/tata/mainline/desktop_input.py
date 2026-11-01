@@ -45,7 +45,7 @@ class DesktopWindow:
     def emergency_stop(self):return bool(user.GetAsyncKeyState(0x77)&0x8001)
 
 
-def find_game_window():
+def game_windows():
     matches=[];callback=C.WINFUNCTYPE(W.BOOL,W.HWND,W.LPARAM)
     @callback
     def visit(hwnd,_):
@@ -59,6 +59,14 @@ def find_game_window():
             finally:kernel.CloseHandle(handle)
         return True
     user.EnumWindows.argtypes=[callback,W.LPARAM];user.EnumWindows(visit,0)
+    return matches
+
+
+def find_game_window(hwnd=None):
+    matches=game_windows()
+    if hwnd is not None:
+        if hwnd not in matches:raise RuntimeError('指定的塔塔窗口已关闭或不属于微信小游戏')
+        return hwnd
     if len(matches)!=1:raise RuntimeError('需要唯一电脑微信塔塔窗口')
     return matches[0]
 
@@ -70,8 +78,8 @@ class LayoutChanged(RuntimeError):
 
 
 class GameInput:
-    def __init__(self,width,height,adaptive=False):
-        self.window=DesktopWindow(find_game_window());self.reference=(width,height)
+    def __init__(self,width,height,adaptive=False,hwnd=None):
+        self.window=DesktopWindow(find_game_window(hwnd) if hwnd is not None else find_game_window());self.reference=(width,height)
         self.adaptive=adaptive;self.gesture_bounds=None
         self.initial_dimensions=self.window.bounds()[2:]
 

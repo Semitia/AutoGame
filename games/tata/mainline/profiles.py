@@ -7,7 +7,8 @@ from live_session import account_key
 
 
 class Profiles:
-    def __init__(self, root=RUNTIME/'accounts', legacy=RUNTIME/'roster.json'):
+    def __init__(self, root=RUNTIME/'accounts', legacy=RUNTIME/'roster.json',local_selection=False):
+        self.local_selection=local_selection;self._active_override=None
         self.root = Path(root)
         self.index_path = self.root/'index.json'
         self.index = read_json(self.index_path) if self.index_path.exists() else dict(schema_version=1, active=None, accounts={})
@@ -29,12 +30,21 @@ class Profiles:
     def activate(self, key):
         if key not in self.index['accounts']:
             raise ValueError('本地账号不存在')
-        self.index['active'] = key
-        write_json(self.index_path, self.index)
+        if self.local_selection:self._active_override=key
+        else:self.index['active']=key
+        self.save_index()
 
     @property
     def active(self):
-        return self.index.get('active')
+        return self._active_override if self.local_selection else self.index.get('active')
+
+    def save_index(self,key=None):
+        latest=read_json(self.index_path) if self.index_path.exists() else dict(schema_version=1,active=None,accounts={})
+        if key is not None:latest['accounts'][key]=self.index['accounts'][key]
+        else:
+            for k,v in self.index['accounts'].items():latest['accounts'].setdefault(k,v)
+        if not self.local_selection:latest['active']=self.index.get('active')
+        self.index=latest;write_json(self.index_path,self.index)
 
     def workspace(self, key):
         path = self.folder(key)/'workspace.json'
@@ -52,7 +62,7 @@ class Profiles:
         if not label:
             raise ValueError('账号名称不能为空')
         self.index['accounts'][key]['label'] = label
-        write_json(self.index_path, self.index)
+        self.save_index(key)
 
     def sync(self, capture, catalog):
         from live_roster import to_roster
@@ -82,5 +92,5 @@ class Profiles:
         record.update(uid=account['uid'], name=account.get('name', ''),
                       level=capture['shared_level'], stage_id=capture['current_stage_id'],
                       stage_name=stage['stage']['DisplayName'], captured_at=capture['captured_at'])
-        write_json(self.index_path, self.index)
+        self.save_index(key)
         return key, changed

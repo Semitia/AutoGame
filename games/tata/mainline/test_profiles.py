@@ -19,6 +19,29 @@ def session(uid=123, stage=1):
 
 
 class ProfileTests(unittest.TestCase):
+    def test_atomic_json_retries_temporary_windows_reader_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'status.json';original=Path.replace;attempts=[]
+            def replace(source,destination):
+                attempts.append(source)
+                if len(attempts)==1:raise PermissionError('destination reader still open')
+                return original(source,destination)
+            with patch.object(Path,'replace',replace),patch('model.time.sleep'):
+                write_json(path,dict(phase='running'))
+            self.assertEqual(read_json(path),dict(phase='running'))
+            self.assertEqual(len(attempts),2)
+            self.assertEqual(list(Path(directory).glob('*.tmp')),[])
+
+    def test_local_account_selection_does_not_change_other_workspace_or_drop_new_accounts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);first=Profiles(root,legacy=None,local_selection=True)
+            second=Profiles(root,legacy=None,local_selection=True)
+            a,b=account_key(123),account_key(456)
+            first.index['accounts'][a]=dict(name='A');first.save_index(a);first.activate(a)
+            second.index['accounts'][b]=dict(name='B');second.save_index(b);second.activate(b)
+            self.assertEqual(first.active,a);self.assertEqual(second.active,b)
+            self.assertEqual(set(read_json(root/'index.json')['accounts']),{a,b})
+
     def setUp(self):
         self.catalog=catalog()
         self.catalog.stage=lambda i:dict(stage=dict(ID=int(i),DisplayName=f'关卡{i}'))

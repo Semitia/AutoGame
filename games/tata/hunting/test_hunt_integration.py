@@ -17,6 +17,25 @@ def load(name,path):
 
 
 class IntegrationTests(unittest.TestCase):
+    def test_background_cli_binds_selected_window_without_focus_or_foreground_transport(self):
+        module=load('hunt_background_cli',HERE/'desktop.py')
+        controls=SimpleNamespace(stop_check=Mock(),release=Mock())
+        live=SimpleNamespace(close=Mock());runner=SimpleNamespace(run=Mock())
+        binding=SimpleNamespace(bound_renderers=Mock(return_value=[999]))
+        background=SimpleNamespace(BackgroundHuntInput=Mock(return_value=controls))
+        @contextmanager
+        def lease(*args,**kwargs):yield
+        with tempfile.TemporaryDirectory() as directory,patch.dict(sys.modules,{'window_binding':binding,'background_input':background}),\
+             patch('desktop_input.find_game_window',return_value=123),patch('hunt_input.HuntInput',side_effect=AssertionError('no foreground transport')),\
+             patch('autogame.platforms.lease.device_lease',side_effect=lease),patch('hunt_live.HuntLive',return_value=live) as create_live,\
+             patch('hunt_engine.Runner',return_value=runner),patch('hunt_layout.Layout'),patch('builtins.print'),\
+             patch.object(sys,'argv',['hunting','--run','--background','--hwnd','123','--run-dir',directory]):
+            module.main()
+        binding.bound_renderers.assert_called_once_with(123)
+        create_live.assert_called_once_with(pids=[999])
+        background.BackgroundHuntInput.assert_called_once_with(123)
+        controls.stop_check.assert_called_once();runner.run.assert_called_once()
+
     def test_unified_shell_blocks_conflicting_input_but_allows_local_search_and_readonly_hunt(self):
         module=load('hunt_test_assistant',HERE.parent/'assistant.py')
         app=module.TataAssistant.__new__(module.TataAssistant);app.closing=False
@@ -42,10 +61,11 @@ class IntegrationTests(unittest.TestCase):
         def lease(key,**kwargs):
             calls.append(('lease',key));yield
         controls=SimpleNamespace(focus=lambda:calls.append(('focus',)),release=Mock())
-        fake_input=SimpleNamespace(HuntInput=lambda:controls)
+        fake_input=SimpleNamespace(HuntInput=lambda **kwargs:controls)
         fake_desktop=SimpleNamespace(find_game_window=lambda:123)
+        fake_binding=SimpleNamespace(bound_renderers=lambda hwnd:[999])
         live=SimpleNamespace(close=Mock());runner=SimpleNamespace(run=Mock())
-        with tempfile.TemporaryDirectory() as directory,patch.dict(sys.modules,{'hunt_input':fake_input,'desktop_input':fake_desktop}),\
+        with tempfile.TemporaryDirectory() as directory,patch.dict(sys.modules,{'hunt_input':fake_input,'desktop_input':fake_desktop,'window_binding':fake_binding}),\
              patch('autogame.platforms.lease.device_lease',side_effect=lease),patch('hunt_live.HuntLive',return_value=live),\
              patch('hunt_engine.Runner',return_value=runner),patch('hunt_layout.Layout'),patch('builtins.print'),\
              patch.object(sys,'argv',['hunting','--run','--activate','--run-dir',directory]):

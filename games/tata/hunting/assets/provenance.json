@@ -5,5 +5,19 @@
     "lock": "4c6b15ce87f6789d69b82f145aa8723aa85d9e6f94c3e2ce86bbf21bb02833a2",
     "rage": "1912a5ca7192fc9ac54de19a01a1a38cf9be23e7f598071f56d0db7e1816e92e",
     "close": "5e81a2d769a39d16bd37041f3871f5eda0759cb2388fe3308273f78c6e0bf693"
+  },
+  "arena": {
+    "sprite": "txui_gym_bg_01.png",
+    "sprite_sha256": "d1f46398a620e6c0b24fd4baa1060fcb0926720a7445c56d922534430a22e406",
+    "pixels_per_unit": 54.61333465576172,
+    "pivot": [
+      0.5,
+      0.5
+    ],
+    "battle_field_origin": [
+      -6.665999889373779,
+      -6.693999767303467
+    ],
+    "source": "Original trap.unity / SpriteRenderer bg / battle_field Transform"
   }
 }

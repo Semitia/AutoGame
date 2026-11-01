@@ -8,6 +8,16 @@ from hunt_layout import Layout,LayoutError
 class LayoutTests(unittest.TestCase):
     def setUp(self):self.layout=Layout()
 
+    def test_exit_shape_in_letterboxed_tall_window(self):
+        image=Image.new('RGB',(840,1555),'white')
+        ImageDraw.Draw(image).rectangle((15,77,738,1360),fill='#21212c')
+        icon=Image.open(ASSETS/'close.png').convert('RGBA')
+        icon.thumbnail((50,50))
+        image.paste(icon,(350,1290),icon)
+        point=self.layout.close(image)
+        self.assertAlmostEqual(point[0],375,delta=8)
+        self.assertAlmostEqual(point[1],1315,delta=8)
+
     def test_original_item_sprites_follow_current_scale(self):
         for scale in (.6,1,1.4):
             image=Image.new('RGB',(600,1200),'#41435a')

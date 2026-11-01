@@ -46,7 +46,12 @@ end,checks=function()
     enemy:Init({id=77,cfgId=2008,pathID=2,createTick=4,exitTick=44},100)
     checked('enemy identity is cfgId, stable instance is id',enemy:GetUnitID()==77 and enemy:GetUnitTid()==2008)
     checked('spawn/exit ticks use 0.25 seconds',enemy:GetSpawnTime()==101 and enemy:GetExitTime()==111)
-    checked('200x room entry balance comes from original config',env.config.TrapDungeonTable[8].Magni==200 and env.config.TrapDungeonTable[8].NeedBullet==90000)
+    checked('200x public config Magni and NeedBullet field values',env.config.TrapDungeonTable[8].Magni==200 and env.config.TrapDungeonTable[8].NeedBullet==90000)
+    local player=ed.TrapBattlePlayerData.New();player.effectFlag={}
+    player:_refreshEffectFlag(31,true)
+    checked('rage activation uses effectFlag.angry for item31',player.effectFlag.angry==true)
+    player:_refreshEffectFlag(31,false)
+    checked('rage expiry clears effectFlag.angry',player.effectFlag.angry==nil)
     local m=ed.TrapBattleModel.New();m:_init()
     m._seatIndex=1;m._players={[1]={},[2]={}};m._enemyDataPool={};m.events={}
     m.FireEvent=function(self,ev,player,unit)self.events[#self.events+1]={ev=ev,id=unit:GetUnitID()}end
@@ -99,7 +104,7 @@ end}
         load(path)
     api.init('Src_AssetData_BackpackModel');api.init('Src_AssetData_InsideModel')
     api.init('BaseRewardView')
-    for name in ('TrapBattleConfig','Data/TrapBattleEnemyData','TrapBattleModel','TrapBattleScene',
+    for name in ('TrapBattleConfig','Data/TrapBattleEnemyData','Data/TrapBattlePlayerData','TrapBattleModel','TrapBattleScene',
                  'View/TrapBattleBossTipNode','View/TrapBattleView'):
         load('Src/UI/TrapBattle/'+name+'.luae')
     checks=list(api.checks().values())

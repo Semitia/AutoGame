@@ -48,10 +48,10 @@ def validate_geometry(g):
         raise ValueError('窗口校准点超出截图边界')
 
 
-def capture_visible_game():
+def capture_visible_game(hwnd=None):
     # Only capture an already visible window. Never restore, activate or move it.
     from desktop_input import DesktopWindow, find_game_window, user, W
-    hwnd = find_game_window()
+    hwnd = find_game_window(hwnd) if hwnd is not None else find_game_window()
     left, top, width, height = DesktopWindow(hwnd).bounds()
     for ix in range(1, 8):
         for iy in range(1, 12):

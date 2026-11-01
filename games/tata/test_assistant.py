@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from assistant import TataAssistant, load_panel
+from assistant import TataAssistant,MultiAccountAssistant,load_panel
 
 
 class AssistantTests(unittest.TestCase):
@@ -92,6 +92,24 @@ def ttk_color(root):
 
 
 class ControlLeaseTests(unittest.TestCase):
+    def test_different_account_workspaces_can_run_different_tools(self):
+        from windows_runtime import prepare
+        prepare()
+        root=tk.Tk();root.withdraw()
+        try:
+            with patch('window_binding.window_choices',return_value=[(11,(0,0,400,750)),(22,(500,0,400,750))]),\
+                 patch('windows_runtime.window_identity',side_effect=lambda hwnd:dict(key=str(hwnd),name=f'账号{hwnd}')):
+                app=MultiAccountAssistant(root)
+            first,second=app.workspaces[11],app.workspaces[22]
+            worker=SimpleNamespace(poll=lambda:None)
+            first.hunting=SimpleNamespace(process=worker,observing=False)
+            second.check_start('fishing')
+            second.fishing=SimpleNamespace(process=worker,observe=False)
+            first.check_start('hunting');second.check_start('fishing')
+            with self.assertRaises(ValueError):first.check_start('fishing')
+            self.assertEqual(set(app.workspaces),{11,22})
+        finally:root.destroy()
+
     def test_autoplay_cannot_focus_or_construct_runner_while_fishing_holds_lease(self):
         load_panel('mainline')
         import autoplay

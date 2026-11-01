@@ -61,7 +61,7 @@
 - LiveBattle只读定位StageModel、StageBattleController、StageBattlePrepareView、StageBattleVictoryView；保存BattleModule.battleID与state。已用合成Lua ABI验证身份过滤、过期对象、多控制器与结算跨关。
 - 已核实原逻辑及实测：OnEndBattleReply先将StageModel与controller/params更新为下一关，BattleModule仍属于上一关End。必须等待真正的下一关BattleModule.state=Prepare且battleID与布阵对象一致；prepare.isShow等动画标志在本机可与画面不一致，不能单独作就绪判据。章节内部ID有跳号（830/11-30→881/12-1），后继取主线配置，不用ID+1。新胜利view可能在扫描后才创建，需有限次数重新定位，不能一直轮询旧refs。
 - 实战证据：11-27实际胜利81.5秒（模拟82.75秒）；11-28胜利89.25秒；11-29胜利86.25秒。15宠完全由脚本布置；后两关重新读取最新养成并多种子复核后复用阵型。证据在autoplay-deploy-20261029.json、live-result-11-27-20261029.json与autoplay-runs子目录。这几局不代表全部机制已校准，calibrated仍为false。
-- 生产入口autoplay.py：逐关同步→现阵评估/经验搜索（按所选复核方式）→通过方案部署→逐步及整队核验→按所选方式预检实际顺序→实战→只读记录→继续。GUI有启动/停止和关数上限，F8/停止文件/失去前台/尺寸变化/未知状态/模拟或实战失败即停止输入；OS文件锁避免本工具双进程控制。只读同步可后台，鼠标输入需前台。游戏已开始的战斗不会因工具停止而终止。
+- 生产入口autoplay.py：逐关同步→现阵评估/经验搜索（按所选复核方式）→通过方案部署→逐步及整队核验→按所选方式预检实际顺序→实战→只读记录→继续。GUI有启动/停止和关数上限，F8/停止文件/动作中尺寸变化/未知状态/模拟或实战失败即停止输入；按窗口的OS文件锁避免重复控制同一账号。2026-11-02新增按窗PID/UID绑定、默认后台输入与多账号工作台；显式前台模式才要求持续前台。新后台布阵/钓鱼仅离线验证，上述实机通关是原前台输入证据。游戏已开始的战斗不会因工具停止而终止。
 - feedback表新增独立live_observation来源；与user_report分开展示和计数，二者均不混入受控模拟偏好训练。版本/养成变化后借用阵型仍须重新模拟。
 - 11-30实测失败：759c99a2ad0343d190b87142ebac7108运行完整15宠核验后败于91.5秒，已停止。原报告训练及复核3/3通过，同实战seed=1008115552仍模拟获胜104.25秒；另8个新种子也模拟通过。核对实际出怪配置、角色养成及fieldNpcInfo后未见差异，不能归因于随机运气或练度。
 - 已定位一项确定原因：DoReqStartBattle按selectedUnitGrid外层/内层Lua pairs顺序打包，ClientBattleBuilder保留输入序列；不能把阵容数组任意排序后模拟。直接读网格的数组段→哈希节点顺序，与实战self_heroes全部15只顺序相同；相同seed用此顺序重跑，本地也败于91.5秒，与实战结果/时间一致。该局不是原生A*差异的证据。

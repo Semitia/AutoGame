@@ -41,9 +41,9 @@ def session_fields(heap, refs):
                 current_stage_id=stage_id)
 
 
-def read_sessions():
+def read_sessions(pids=None):
     matches, errors = [], []
-    for pid in renderer_pids():
+    for pid in (renderer_pids() if pids is None else pids):
         reader = None
         try:
             reader = WindowsReader(pid)
@@ -82,9 +82,15 @@ def main():
     parser.add_argument('--data', type=Path, default=DATA)
     parser.add_argument('--dataset', type=Path, default=DATASET)
     parser.add_argument('--out', type=Path, default=RUNTIME/'sessions.json')
+    parser.add_argument('--hwnd',type=int)
     args = parser.parse_args()
     try:
-        sessions = read_sessions()
+        if args.hwnd is not None:
+            import sys
+            sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+            from windows_runtime import window_pids
+            sessions=read_sessions(pids=window_pids(args.hwnd))
+        else:sessions=read_sessions()
         catalog = Catalog(args.data, args.dataset)
         for session in sessions:
             to_roster(session, catalog)

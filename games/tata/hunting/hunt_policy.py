@@ -12,15 +12,20 @@ class Options:
     seconds:float=3600
     reserve:int=0
     test_fish:bool=False
+    hunt_only:bool=False
+    target_tids:tuple=(2008,)
 
     @property
     def hunt_multiplier(self):return 2 if self.test_fish else 200
 
     @property
-    def target_tid(self):return 2002 if self.test_fish else TARGET_TID
+    def target_tid(self):return 2002 if self.test_fish else self.target_tids[0]
 
     @property
-    def target_name(self):return '鱼怪臭臭' if self.test_fish else '萨满臭臭'
+    def target_ids(self):return (2002,) if self.test_fish else self.target_tids
+
+    @property
+    def target_name(self):return '鱼怪臭臭' if self.test_fish else '、'.join({2008:'萨满臭臭',2007:'电击臭臭'}[tid] for tid in self.target_tids)
 
     def validate(self):
         import math
@@ -29,6 +34,8 @@ class Options:
         if type(self.rounds) is not int or not 1<=self.rounds<=1000:raise ValueError('本次轮数应为1–1000')
         if not math.isfinite(self.seconds) or not 0<self.seconds<=86400:raise ValueError('运行时长应在0–1440分钟内')
         if type(self.reserve) is not int or self.reserve<0:raise ValueError('保留金猎币应为非负整数')
+        if not self.target_tids or len(set(self.target_tids))!=len(self.target_tids) or any(type(tid) is not int or tid not in (2008,2007) for tid in self.target_tids):
+            raise ValueError('允许目标为萨满2008和电击2007，至少选择一种')
         return self
 
 
@@ -44,7 +51,10 @@ class Policy:
         if s['screen'] not in ('room','lobby','reward','transition'):raise ValueError('当前不是已确认的围猎界面')
         if s['screen']=='transition':return dict(kind='wait',reason='等待围猎界面就绪')
         if self.mode is None:
-            self.mode='hunt' if self.options.test_fish or s['locks']>=self.options.stock or (s.get('multiplier')==self.options.hunt_multiplier and (s['locks']>0 or s.get('lock_active'))) else 'farm'
+            # Stock is a refill goal, never a threshold for abandoning locks
+            # still held. A restart in an existing low room continues refill.
+            self.mode='farm' if (s.get('multiplier')==self.options.low_multiplier and not self.options.test_fish) else (
+                'hunt' if self.options.test_fish or s['locks']>0 or s.get('lock_active') else 'farm')
         if s['screen']=='reward':raise ValueError('启动时存在奖励页，请先关闭后再运行围猎')
         if self.target is not None:
             if s['screen']!='room':raise ValueError('跟踪目标时房间上下文改变，停止')
@@ -57,6 +67,8 @@ class Policy:
             return dict(kind='wait',reason=f'锁定{self.options.target_name}中；按唯一编号跟踪，不看头像是否显示')
         if self.options.test_fish and s['locks']<=0 and not self.pending and not s.get('lock_active'):
             raise ValueError('鱼怪测试需要锁定道具，不自动刷道具')
+        if self.options.hunt_only and s['locks']<=0 and not self.pending and not s.get('lock_active'):
+            return dict(kind='exit',reason='本次仅执行高倍锁定，锁定已用完',finish=True) if s['screen']=='room' else dict(kind='finish')
         if self.mode=='farm' and s['locks']>=self.options.stock:self.mode='hunt'
         if self.mode=='hunt' and s['locks']<=0 and not self.pending and not s.get('lock_active'):self.mode='farm'
         desired=self.options.hunt_multiplier if self.mode=='hunt' else self.options.low_multiplier
@@ -64,8 +76,8 @@ class Policy:
         if s['screen']=='lobby':
             if s['switching']:return dict(kind='wait',reason='等待场地切换完成')
             if s['total_bullets']<room['unlock_cost']:raise ValueError(f'{desired}倍场尚未解锁，未点击进入')
-            if s['bullets']<max(room['need_bullets'],self.options.reserve+desired):
-                raise ValueError(f'金猎币不足以进入{desired}倍场或已达到保留数量')
+            if s['bullets']<self.options.reserve+desired:
+                return dict(kind='finish',reason=f'剩余金猎币不足{desired}倍的一次射击或已达到保留数量')
             if s['selected_dungeon']!=room['id']:
                 ids=s['dungeons']
                 if room['id'] not in ids:raise ValueError('目标场地不在当前游戏可选列表中')
@@ -75,9 +87,11 @@ class Policy:
         if s['bullets']<=self.options.reserve+desired:return dict(kind='exit',reason='达到金猎币保留数量',finish=True)
         if self.mode=='farm':
             if s['lock_active']:return dict(kind='exit',reason='低倍场存在已有锁定，先退出重置')
+            if not any(e['active'] for e in s.get('enemies',[])):
+                return dict(kind='wait',reason='等待活跃怪群，不向空地射击')
             if self.options.use_rage and s['rage']>0 and not s['rage_active']:return dict(kind='rage')
             return dict(kind='fire')
-        candidates=[e for e in s['enemies'] if e['tid']==self.options.target_tid and e['active']]
+        candidates=[e for e in s['enemies'] if e['tid'] in self.options.target_ids and e['active']]
         if s['lock_active']:
             actual=next((e for e in candidates if e['id']==s['lock_target']),None)
             if actual is None:return dict(kind='exit',reason='锁定了其他臭臭，退出节省子弹')

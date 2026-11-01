@@ -25,6 +25,36 @@ class Controls:
 
 
 class EngineTests(unittest.TestCase):
+    def test_room_controls_retry_transition_frame_without_clicking(self):
+        from hunt_layout import LayoutError
+        with tempfile.TemporaryDirectory() as directory:
+            state=room();runner,current,controls,_=self.driver(state,Path(directory))
+            runner.layout.close=Mock(side_effect=[LayoutError('transition'),(10,10)])
+            self.assertEqual(runner.room_controls(state)['close'],(10,10))
+            self.assertFalse(controls.clicks)
+
+    def test_rage_waits_for_real_effect_without_spending_timeout_on_heap_scan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=room(1,0,enemies=[enemy()]);runner,current,controls,events=self.driver(state,Path(directory))
+            runner.last_refresh=0;runner.live.refresh=Mock(side_effect=AssertionError('rage does not need discovery'))
+            original=runner.live.snapshot;reads=[0]
+            def snapshot():
+                reads[0]+=1
+                if reads[0]>=3:current[0]['rage_active']=True
+                return original()
+            runner.live.snapshot=snapshot
+            runner.click_item(state,'rage')
+            runner.live.refresh.assert_not_called();self.assertEqual(len(controls.clicks),1)
+
+    def test_transient_lobby_frame_retries_recognition_before_one_click(self):
+        from hunt_layout import LayoutError
+        with tempfile.TemporaryDirectory() as directory:
+            runner,current,controls,_=self.driver(lobby(),Path(directory))
+            runner.layout.navigation=Mock(side_effect=[LayoutError('transition frame'),(30,30)])
+            controls.on_click=lambda *args:current[0].update(selected_dungeon=2)
+            runner.lobby_action(copy.deepcopy(current[0]),dict(kind='next'))
+            self.assertEqual(controls.clicks,[(30,30)])
+
     def test_navigation_wait_reads_live_selection_without_rescanning_heap(self):
         with tempfile.TemporaryDirectory() as directory:
             runner,current,controls,_=self.driver(lobby(),Path(directory))

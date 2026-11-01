@@ -33,9 +33,11 @@ def friendly_error(text):
 
 
 class FishingPanel:
-    def __init__(self,root,observe=False,*,embedded=False,before_start=None):
+    def __init__(self,root,observe=False,*,embedded=False,before_start=None,hwnd=None,account_key=None):
         self.root=root;self.observe=observe;self.process=None;self.stop_file=None
         self.before_start=before_start
+        self.bound_hwnd=hwnd
+        self.bound_account_key=account_key
         self.queue=queue.Queue();self.stopping=False;self.closing=False;self.deadline=None
         self.counts={'cast':0,'reel':0,'collect':0};self.started=None;self.last_error=None
         if not embedded:
@@ -66,7 +68,7 @@ class FishingPanel:
         self.log=tk.Text(outer,height=5,width=43,font=('Microsoft YaHei UI',9),bg='white',fg='#475569',
                          relief='flat',padx=10,pady=8,state='disabled',takefocus=False)
         self.log.pack(fill='x')
-        ttk.Label(outer,text='保持游戏在前台；F8 或点按钮即可停止。',style='Hint.TLabel').pack(anchor='w',pady=(12,0))
+        ttk.Label(outer,text='默认后台运行，游戏不要最小化；F8 或点按钮即可停止。',style='Hint.TLabel').pack(anchor='w',pady=(12,0))
         if observe:ttk.Label(outer,text='测试模式：仅观察，不点击游戏',style='Hint.TLabel').pack(anchor='w')
         if not embedded:
             self.position()
@@ -98,7 +100,7 @@ class FishingPanel:
             if self.before_start:self.before_start()
             minutes=float(self.minutes.get())
             if not 1<=minutes<=1440:raise ValueError('运行时长请输入 1～1440 分钟')
-            hwnd=find_game_window()
+            hwnd=self.bound_hwnd if self.bound_hwnd is not None else find_game_window()
             RUNTIME.mkdir(parents=True,exist_ok=True)
             self.stop_file=RUNTIME/('panel-'+uuid.uuid4().hex+'.stop')
             cmd=[sys.executable,'-u',str(Path(__file__).with_name('desktop.py')),'--hwnd',str(hwnd),
@@ -106,7 +108,8 @@ class FishingPanel:
             if self.observe:cmd.append('--observe')
             env=dict(os.environ,PYTHONIOENCODING='utf-8')
             # The worker focuses only after it owns the shared game control lease.
-            cmd.append('--activate')
+            cmd.append('--background')
+            if self.bound_account_key:cmd+=['--account-key',self.bound_account_key]
             self.process=subprocess.Popen(cmd,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                 text=True,encoding='utf-8',errors='replace',bufsize=1,env=env,creationflags=subprocess.CREATE_NO_WINDOW)
             self.counts={'cast':0,'reel':0,'collect':0};self.stopping=False;self.last_error=None;self.started=time.monotonic()

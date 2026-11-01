@@ -4,6 +4,8 @@ import importlib.util
 import os
 from pathlib import Path
 import sys
+import queue
+import threading
 import tkinter as tk
 from tkinter import ttk
 
@@ -38,24 +40,27 @@ def running(owner, name):
 
 
 class TataAssistant:
-    def __init__(self, root, *, mainline_options=None):
+    def __init__(self, root, *, mainline_options=None,hwnd=None,embedded=False):
         self.root = root
+        self.bound_hwnd=hwnd
         self.mainline_options = mainline_options or {}
         self.mainline = self.fishing = self.hunting = None
         self.pages = {}
         self.closing = False
         self.current_page = None
-        root.title('塔塔冒险队 · 辅助器')
         root.configure(bg=BG)
-        width, height = min(1480, root.winfo_screenwidth()-60), min(940, root.winfo_screenheight()-80)
-        root.geometry(f'{width}x{height}')
-        root.minsize(min(1200, width), min(760, height))
+        if not embedded:
+            root.title('塔塔冒险队 · 辅助器')
+            width, height = min(1480, root.winfo_screenwidth()-60), min(940, root.winfo_screenheight()-80)
+            root.geometry(f'{width}x{height}')
+            root.minsize(min(1200, width), min(760, height))
         self.style()
 
         header = ttk.Frame(root, padding=(20, 12))
         header.pack(fill='x')
         ttk.Label(header, text='TATA / 塔塔冒险队辅助器', style='Title.TLabel').pack(side='left')
-        ttk.Button(header, text='停止全部任务', command=self.stop_all).pack(side='right')
+        ttk.Button(header, text='停止本账号任务' if hwnd is not None else '停止全部任务',
+            command=lambda:self.stop_all(global_signals=hwnd is None)).pack(side='right')
         self.activity = tk.StringVar(value='当前没有运行任务')
         ttk.Label(header, textvariable=self.activity, style='Hint.TLabel').pack(side='right', padx=18)
 
@@ -73,10 +78,10 @@ class TataAssistant:
         ttk.Button(sidebar, text='打开本机数据', command=self.open_runtime).pack(side='bottom', fill='x', pady=8)
         self.host = ttk.Frame(body)
         self.host.pack(side='left', fill='both', expand=True)
-        self.notice = tk.StringVar(value='选择功能开始。自动操作时保持游戏在前台，F8 可停止当前输入。')
+        self.notice = tk.StringVar(value='默认后台运行，游戏不要最小化。不同账号可同时选择不同辅助；F8 停止当前输入。')
         ttk.Label(root, textvariable=self.notice, style='Hint.TLabel', padding=(20, 10), wraplength=1200).pack(fill='x')
         self.build_home()
-        root.protocol('WM_DELETE_WINDOW', self.close)
+        if not embedded:root.protocol('WM_DELETE_WINDOW', self.close)
         self.show('home')
         self.timer = root.after(250, self.poll)
 
@@ -120,7 +125,7 @@ class TataAssistant:
         self.hunting_status = tk.StringVar(value='围猎：尚未打开')
         for variable in (self.mainline_status, self.fishing_status, self.hunting_status):
             ttk.Label(page, textvariable=variable, wraplength=920).pack(anchor='w', pady=8)
-        ttk.Label(page, text='主线、钓鱼和围猎共用游戏控制权；本地阵容搜索可以与小游戏同时运行。',
+        ttk.Label(page, text='同一账号的主线、钓鱼和围猎共用控制权；不同账号可以同时辅助。本地搜索可独立运行。',
                   style='Hint.TLabel', wraplength=900).pack(anchor='w', pady=20)
 
     def check_start(self, feature):
@@ -130,6 +135,28 @@ class TataAssistant:
                 ('fishing',self.fishing,'process','钓鱼'),('hunting',self.hunting,'process','围猎')]:
             if name!=feature and running(owner,process) and not getattr(owner,'observing',False) and not getattr(owner,'observe',False):
                 raise ValueError(label+'正在运行，请先停止再启动其他自动操作')
+        for name,record in self.external_states().items():
+            raise ValueError({'mainline':'自动推关','fishing':'钓鱼','hunting':'围猎'}[name]+'正在本账号的独立进程中运行，请先停止')
+
+    def external_states(self):
+        if getattr(self,'bound_hwnd',None) is None:return {}
+        from windows_runtime import external_job
+        result={}
+        for feature,owner,field in [('mainline',self.mainline,'autoplay_process'),('fishing',self.fishing,'process'),('hunting',self.hunting,'process')]:
+            if running(owner,field):continue
+            record=external_job(feature,self.bound_hwnd)
+            if record:result[feature]=record
+        return result
+
+    def last_external_states(self):
+        if getattr(self,'bound_hwnd',None) is None:return {}
+        from windows_runtime import job_status
+        result={}
+        for feature,owner in [('mainline',self.mainline),('fishing',self.fishing),('hunting',self.hunting)]:
+            if owner is None:
+                state=job_status(feature,self.bound_hwnd)
+                if state:result[feature]=state
+        return result
 
     def show(self, key):
         if self.closing:
@@ -147,22 +174,28 @@ class TataAssistant:
                     self.root.update_idletasks()
                     ensure_default_resources()
                     preparing.destroy()
+                    options=dict(self.mainline_options)
+                    if self.bound_hwnd is not None and getattr(self,'account_key',None):
+                        from profiles import Profiles
+                        profiles=Profiles(local_selection=True)
+                        if self.account_key in profiles.index['accounts']:profiles.activate(self.account_key)
+                        options.setdefault('profile_store',profiles)
                     self.mainline = module.MainlinePanel(page, module.Catalog(), embedded=True,
-                        before_autoplay=lambda: self.check_start('mainline'), **self.mainline_options)
+                        before_autoplay=lambda: self.check_start('mainline'),hwnd=self.bound_hwnd, **options)
                 elif key=='hunting':
-                    self.hunting=module.HuntPanel(page,embedded=True,before_start=lambda:self.check_start('hunting'))
+                    self.hunting=module.HuntPanel(page,embedded=True,before_start=lambda:self.check_start('hunting'),hwnd=self.bound_hwnd,account_key=getattr(self,'account_key',None))
                 else:
                     controls = ttk.Frame(page, width=540)
                     controls.pack(side='left', fill='y')
                     controls.pack_propagate(False)
                     self.fishing = module.FishingPanel(controls, embedded=True,
-                        before_start=lambda: self.check_start('fishing'))
+                        before_start=lambda: self.check_start('fishing'),hwnd=self.bound_hwnd,account_key=getattr(self,'account_key',None))
                     guide = ttk.Frame(page, padding=(20, 28))
                     guide.pack(side='left', fill='both', expand=True)
                     ttk.Label(guide, text='开始前', style='Title.TLabel').pack(anchor='w', pady=(0, 16))
                     ttk.Label(guide, text='1. 在电脑微信打开塔塔冒险队。\n\n2. 进入「钓鱼大赛」。\n\n3. 设置时长，点击「开始钓鱼」。',
                               justify='left', wraplength=350).pack(anchor='w')
-                    ttk.Label(guide, text='开始后保持游戏在前台。\nF8、停止钓鱼或顶部停止按钮均可停止。',
+                    ttk.Label(guide, text='默认后台运行，游戏不要最小化。\nF8、停止钓鱼或顶部停止按钮均可停止。',
                               style='Hint.TLabel', wraplength=350).pack(anchor='w', pady=24)
             except Exception as error:
                 for child in page.winfo_children():
@@ -195,6 +228,9 @@ class TataAssistant:
             self.fishing.stop()
         if self.hunting:
             self.hunting.stop()
+        if getattr(self,'bound_hwnd',None) is not None:
+            from windows_runtime import stop_external
+            for feature in self.external_states():stop_external(feature,self.bound_hwnd)
         self.notice.set('已请求停止。搜索完成当前模拟后保存进度；已开始的游戏战斗会继续结算。')
 
     def open_runtime(self):
@@ -211,6 +247,7 @@ class TataAssistant:
             jobs.append('自动钓鱼')
         if running(self.hunting,'process'):
             jobs.append('围猎只读检查' if self.hunting.observing else '围猎自动化')
+        jobs.extend({'mainline':'自动推关（独立进程）','fishing':'钓鱼（独立进程）','hunting':'围猎（独立进程）'}[name] for name in self.external_states())
         return jobs
 
     def poll(self):
@@ -222,6 +259,11 @@ class TataAssistant:
             self.fishing_status.set('钓鱼：'+self.fishing.status.get()+'\n'+self.fishing.metrics.get())
         if self.hunting:
             self.hunting_status.set('围猎：'+self.hunting.status.get()+'\n'+self.hunting.metrics.get())
+        for name,record in (self.last_external_states()|self.external_states()).items():
+            variable={'mainline':self.mainline_status,'fishing':self.fishing_status,'hunting':self.hunting_status}[name]
+            label={'mainline':'主线','fishing':'钓鱼','hunting':'围猎'}[name]
+            variable.set(label+'：'+(record.get('reason') or record.get('phase') or record.get('event','运行中'))+
+                (f" · 金猎币 {record['bullets']} · 锁定 {record.get('locks','—')}" if 'bullets' in record else ''))
         if self.closing and not jobs:
             # Give the panels' exit callbacks a turn to close log streams.
             self.root.after(600, self.root.destroy)
@@ -247,13 +289,77 @@ class TataAssistant:
         self.notice.set('正在停止任务并保存搜索进度，完成后自动关闭…')
 
 
+class MultiAccountAssistant:
+    """One independently bound workspace per live game window."""
+    def __init__(self,root,*,initial_page='home'):
+        self.root=root;self.initial_page=initial_page;self.workspaces={};self.closing=False;self.identities=queue.Queue()
+        root.title('塔塔冒险队 · 多账号辅助器');root.configure(bg=BG)
+        root.geometry(f'{min(1480,root.winfo_screenwidth()-60)}x{min(1000,root.winfo_screenheight()-80)}')
+        header=ttk.Frame(root,padding=(18,10));header.pack(fill='x')
+        ttk.Label(header,text='多账号 · 默认后台运行').pack(side='left')
+        ttk.Button(header,text='停止全部账号',command=self.stop_all).pack(side='right')
+        ttk.Button(header,text='刷新账号',command=self.refresh).pack(side='right',padx=10)
+        self.status=tk.StringVar(value='正在发现游戏窗口…')
+        ttk.Label(header,textvariable=self.status).pack(side='left',padx=20)
+        self.tabs=ttk.Notebook(root);self.tabs.pack(fill='both',expand=True)
+        root.protocol('WM_DELETE_WINDOW',self.close)
+        self.refresh();root.after(300,self.poll)
+
+    def refresh(self):
+        if self.closing:return
+        from windows_runtime import prepare,window_identity
+        prepare()
+        from window_binding import window_choices
+        try:choices=window_choices()
+        except Exception as exc:self.status.set(str(exc));return
+        for hwnd,bounds in choices:
+            if hwnd in self.workspaces:continue
+            frame=tk.Frame(self.tabs,bg=BG)
+            label=f'微信账号 {len(self.workspaces)+1}'
+            self.tabs.add(frame,text=label)
+            workspace=TataAssistant(frame,hwnd=hwnd,embedded=True)
+            self.workspaces[hwnd]=workspace
+            def identify(h=hwnd):
+                try:self.identities.put((h,window_identity(h),None))
+                except Exception as exc:self.identities.put((h,None,str(exc)))
+            threading.Thread(target=identify,daemon=True).start()
+        self.status.set(f'已发现 {len(choices)} 个游戏窗口；每个账号独立选择任务' if choices else '请打开微信中的塔塔，再点“刷新账号”')
+
+    def stop_all(self):
+        for workspace in self.workspaces.values():workspace.stop_all(global_signals=False)
+        self.status.set('已请求停止所有账号的任务')
+
+    def poll(self):
+        try:
+            while True:
+                hwnd,identity,error=self.identities.get_nowait()
+                workspace=self.workspaces.get(hwnd)
+                if workspace and identity:
+                    workspace.account_key=identity['key']
+                    for feature in ('hunting','fishing'):
+                        panel=getattr(workspace,feature,None)
+                        if panel is not None:panel.bound_account_key=identity['key']
+                    self.tabs.tab(workspace.root,text=identity['name'] or '账号 '+identity['key'][-6:])
+                    if self.initial_page!='home' and workspace.current_page=='home':workspace.show(self.initial_page)
+                elif error:self.status.set('账号读取暂不可用：'+error)
+        except queue.Empty:pass
+        if self.closing and not any(w.active_jobs() for w in self.workspaces.values()):
+            self.root.after(600,self.root.destroy);return
+        self.root.after(300,self.poll)
+
+    def close(self):
+        if self.closing:return
+        self.closing=True
+        for workspace in self.workspaces.values():workspace.close()
+        self.status.set('正在停止各账号任务并保存…')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--page', choices=('home', 'mainline', 'fishing', 'hunting'), default='home')
     args = parser.parse_args()
     root = tk.Tk()
-    app = TataAssistant(root)
-    app.show(args.page)
+    app = MultiAccountAssistant(root,initial_page=args.page)
     root.mainloop()
 
 

@@ -1,18 +1,34 @@
-"""Foreground hunt loop; no game memory writes, Lua calls or network requests."""
+"""Hunt loop with a selected desktop transport; no game memory writes or requests."""
 from pathlib import Path
+from dataclasses import replace
+import json
 import time
 from hunt_paths import RUNTIME
 from hunt_policy import Policy
+from hunt_layout import LayoutError
 from live_roster import LiveReadError
 
 
 class Runner:
-    def __init__(self,options,live,controls,layout,emit,stop_path=None,evidence_dir=None):
+    def __init__(self,options,live,controls,layout,emit,stop_path=None,evidence_dir=None,control_path=None,initial_mode=None):
         self.options=options.validate();self.policy=Policy(options)
+        if initial_mode in ('farm','hunt'):self.policy.mode=initial_mode
         self.live=live;self.input=controls;self.layout=layout;self.emit=emit
         self.stop_path=Path(stop_path or RUNTIME/'STOP');self.cached=None
         self.room_token=None;self.last_refresh=time.monotonic();self.pending_since=None;self.stopping=False
         self.evidence_dir=Path(evidence_dir) if evidence_dir else None;self.last_observation=None
+        self.farm_aim=None;self.last_aim=0.;self.last_aim_log=0.;self.last_aim_warning=0.
+        self.control_path=Path(control_path) if control_path else None;self.last_control=0.
+
+    def update_control(self):
+        if self.control_path is None or time.monotonic()-self.last_control<1:return
+        self.last_control=time.monotonic()
+        try:value=json.loads(self.control_path.read_text(encoding='utf-8'))
+        except (OSError,ValueError):return
+        tids=tuple(value.get('targets',self.options.target_tids))
+        if tids!=self.options.target_tids:
+            self.options=replace(self.options,target_tids=tids).validate();self.policy.options=self.options
+            self.emit('targets_changed',targets=list(tids),reason='已更新允许目标：'+self.options.target_name)
 
     def check(self,allow_stop=False):
         self.input.stop_check()
@@ -22,6 +38,14 @@ class Runner:
         self.input.stop_check()
         self.last_observation=self.live.snapshot()
         return self.last_observation
+
+    def ready_snapshot(self):
+        try:return self.snapshot()
+        except LiveReadError as exc:
+            if '账号' in str(exc):raise
+            self.input.release();self.emit('recovering',reason='重新定位围猎界面：'+str(exc))
+            self.live.refresh()
+            return self.wait(lambda current:current['screen'] in ('room','lobby','reward'),60)
 
     def wait(self,predicate,seconds=12,allow_stop=False,refresh=True):
         end=time.monotonic()+seconds;error=None
@@ -37,8 +61,7 @@ class Runner:
         raise RuntimeError('围猎状态等待超时'+('：'+str(error) if error else ''))
 
     def image(self):
-        from calibration import capture_visible_game
-        image=capture_visible_game();self.input.set_reference(*image.size)
+        image=self.input.capture();self.input.set_reference(*image.size)
         if self.evidence_dir:
             self.evidence_dir.mkdir(parents=True,exist_ok=True);image.save(self.evidence_dir/'last-layout.png')
         return image
@@ -46,8 +69,14 @@ class Runner:
     def room_controls(self,state):
         size=self.input.window.bounds()[2:]
         if self.cached and self.cached['size']==size and self.cached['room']==tuple(state['room_token']):return self.cached
-        image=self.image()
-        self.cached=dict(size=image.size,room=tuple(state['room_token']),close=self.layout.close(image))
+        deadline=time.monotonic()+1.2
+        while True:
+            self.input.release();image=self.image()
+            try:close=self.layout.close(image);break
+            except LayoutError:
+                if time.monotonic()>=deadline:raise
+                self.room_check(state,self.snapshot());self.check();time.sleep(.03)
+        self.cached=dict(size=image.size,room=tuple(state['room_token']),close=close)
         # Locate consumables only when an action is requested. An active item's
         # countdown may hide its icon and must not prevent the emergency exit.
         return self.cached
@@ -69,14 +98,14 @@ class Runner:
         self.input.click(*point);self.emit(name+'_requested',locks=current['locks'],rage=current['rage'])
         if name=='rage':
             self.wait(lambda s:s['screen']=='room' and s['room_token']==state['room_token']
-                and (s['rage_active'] or s['rage']<state['rage']),3)
+                and s['rage_active'],8,refresh=False)
 
     def exit_room(self,state,reason,allow_stop=False):
         self.input.release();controls=self.room_controls(state)
         current=self.snapshot();self.room_check(state,current)
         started=time.perf_counter()
         self.input.click(*controls['close']);self.emit('exit_requested',reason=reason)
-        end=time.monotonic()+12;last_reward_tap=float('-inf')
+        end=time.monotonic()+30;last_reward_tap=float('-inf')
         while time.monotonic()<end:
             self.check(allow_stop)
             try:
@@ -101,23 +130,30 @@ class Runner:
         raise RuntimeError('退出未完成，已停止后续射击；请检查围猎奖励页')
 
     def lobby_action(self,state,action):
-        self.input.release();kind=action['kind'];image=self.image()
-        point=self.layout.start(image) if kind=='enter' else self.layout.navigation(image,kind)
+        self.input.release();kind=action['kind'];deadline=time.monotonic()+1.2
+        while True:
+            self.check();image=self.image()
+            try:
+                point=self.layout.start(image) if kind=='enter' else self.layout.navigation(image,kind)
+                break
+            except LayoutError:
+                if time.monotonic()>=deadline:raise
+                time.sleep(.03)
         latest=self.snapshot()
         if (latest['screen']!='lobby' or latest['switching'] or latest['selected_dungeon']!=state['selected_dungeon']
             or self.policy.decide(latest)!=action):raise RuntimeError('场地选择已改变，未点击')
         self.input.click(*point);self.emit(kind,selected_dungeon=state['selected_dungeon'])
         if kind=='enter':
-            current=self.wait(lambda s:s['screen']=='room' and s['room_token'][2]==action['dungeon'],20)
+            current=self.wait(lambda s:s['screen']=='room' and s['room_token'][2]==action['dungeon'],60)
             self.room_controls(current)
         else:self.wait(lambda s:s['screen']=='lobby' and not s['switching'] and s['selected_dungeon']!=state['selected_dungeon'],5,refresh=False)
 
     def run(self):
-        end=time.monotonic()+self.options.seconds;previous=None;last_metrics=0.
+        end=time.monotonic()+self.options.seconds;previous=None;last_metrics=0.;finish_reason='达到轮数或时长上限'
         try:
             self.wait(lambda s:s['screen'] in ('room','lobby','reward'),20)
             while time.monotonic()<end:
-                self.check();s=self.snapshot()
+                self.check();self.update_control();s=self.ready_snapshot()
                 if s['screen']=='transition':
                     self.input.release()
                     self.wait(lambda current:current['screen'] in ('room','lobby','reward'),20)
@@ -127,20 +163,36 @@ class Runner:
                 if kind!=previous or time.monotonic()-last_metrics>1:
                     self.emit('state',phase=kind,reason=action.get('reason',''),completed=self.policy.completed,
                         locks=s['locks'],rage=s['rage'],bullets=s['bullets'],multiplier=s.get('multiplier'),
-                        lock_active=s.get('lock_active',False),lock_target=s.get('lock_target'),target=self.policy.target)
+                        lock_active=s.get('lock_active',False),lock_target=s.get('lock_target'),target=self.policy.target,mode=self.policy.mode)
                     previous=kind;last_metrics=time.monotonic()
-                if kind=='finish':break
+                if kind=='finish':finish_reason=action.get('reason',finish_reason);break
                 if kind in ('enter','next','previous'):self.lobby_action(s,action)
                 elif kind=='exit':
                     self.exit_room(s,action['reason']);self.policy.exited(action);self.pending_since=None
-                    if action.get('finish'):break
+                    if action.get('finish'):finish_reason=action['reason'];break
                 elif kind in ('lock','rage'):self.click_item(s,kind)
                 elif kind=='fire':
                     # Never reuse a firing gesture after changing room or size.
                     if s['multiplier']!=self.options.low_multiplier:raise RuntimeError('高倍场禁止手动射击')
-                    if not self.input.firing:
-                        point=self.layout.aim(self.image());latest=self.snapshot();self.room_check(s,latest)
-                        if self.policy.decide(latest)['kind']=='fire':self.input.start_fire(point)
+                    if time.monotonic()-self.last_aim>=.08:
+                        from farm_aim import FarmAim,farm_target
+                        if self.farm_aim is None:self.farm_aim=FarmAim()
+                        if self.farm_aim.size!=self.input.window.bounds()[2:] or self.farm_aim.room!=tuple(s['room_token']):
+                            self.input.release()
+                            try:self.farm_aim.recognize(self.image(),s['room_token'])
+                            except LayoutError as exc:
+                                if time.monotonic()-self.last_aim_warning>1:
+                                    self.emit('aim_wait',reason=str(exc));self.last_aim_warning=time.monotonic()
+                                time.sleep(.05);continue
+                        latest=self.snapshot();self.room_check(s,latest);target=farm_target(latest,self.farm_aim)
+                        if target is None:self.input.release();time.sleep(.02);continue
+                        try:point=self.farm_aim.point(target)
+                        except LayoutError:self.input.release();time.sleep(.02);continue
+                        if self.policy.decide(latest)['kind']=='fire':
+                            self.input.fire_at(point,.165 if latest['rage_active'] else .33);self.last_aim=time.monotonic()
+                            if self.last_aim-self.last_aim_log>1:
+                                self.emit('aim',target_id=target['id'],target_tid=target['tid'],point=point)
+                                self.last_aim_log=self.last_aim
                 else:
                     self.input.release()
                     if self.policy.pending and self.pending_since is not None and time.monotonic()-self.pending_since>3:
@@ -150,7 +202,7 @@ class Runner:
             self.input.release()
             current=self.snapshot()
             if current['screen']=='room':self.exit_room(current,'本次运行结束')
-            self.emit('finished',completed=self.policy.completed,reason='达到轮数或时长上限')
+            self.emit('finished',completed=self.policy.completed,reason=finish_reason)
         except InterruptedError:
             self.input.release();current=self.snapshot()
             if current['screen']=='room':self.exit_room(current,'用户停止',allow_stop=True)

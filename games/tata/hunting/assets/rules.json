@@ -79,157 +79,188 @@
     {
       "id": 1101,
       "score": 2,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.08696
     },
     {
       "id": 1102,
       "score": 3,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.07248
     },
     {
       "id": 1103,
       "score": 4,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.05435
     },
     {
       "id": 1104,
       "score": 5,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.04348
     },
     {
       "id": 1105,
       "score": 5,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.04348
     },
     {
       "id": 1106,
       "score": 6,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.03623
     },
     {
       "id": 1107,
       "score": 6,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.03623
     },
     {
       "id": 1108,
       "score": 7,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.03105
     },
     {
       "id": 1110,
       "score": 7,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.03105
     },
     {
       "id": 1111,
       "score": 8,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.02718
     },
     {
       "id": 1112,
       "score": 8,
-      "kind": 1
+      "kind": 1,
+      "farm_weight": 0.02718
     },
     {
       "id": 1113,
       "score": 12,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.0522
     },
     {
       "id": 1114,
       "score": 12,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.0522
     },
     {
       "id": 1115,
       "score": 15,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.0435
     },
     {
       "id": 1116,
       "score": 15,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.0435
     },
     {
       "id": 1117,
       "score": 20,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.03396
     },
     {
       "id": 1118,
       "score": 20,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.03396
     },
     {
       "id": 1119,
       "score": 25,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.03032
     },
     {
       "id": 1120,
       "score": 25,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.03032
     },
     {
       "id": 1121,
       "score": 30,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.02562
     },
     {
       "id": 1122,
       "score": 30,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.02562
     },
     {
       "id": 1123,
       "score": 45,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.01776
     },
     {
       "id": 1124,
       "score": 45,
-      "kind": 2
+      "kind": 2,
+      "farm_weight": 0.01776
     },
     {
       "id": 2001,
       "score": 100,
-      "kind": 3
+      "kind": 3,
+      "farm_weight": 0.01245
     },
     {
       "id": 2002,
       "score": 150,
-      "kind": 3
+      "kind": 3,
+      "farm_weight": 0.016875
     },
     {
       "id": 2003,
       "score": 200,
-      "kind": 3
+      "kind": 3,
+      "farm_weight": 0.015075
     },
     {
       "id": 2004,
       "score": 300,
-      "kind": 3
+      "kind": 3,
+      "farm_weight": 0.0177
     },
     {
       "id": 2005,
       "score": 500,
-      "kind": 3
+      "kind": 3,
+      "farm_weight": 0.01875
     },
     {
       "id": 2006,
       "score": 700,
-      "kind": 3
+      "kind": 3,
+      "farm_weight": 0.0246
     },
     {
       "id": 2007,
       "score": 1000,
-      "kind": 3
+      "kind": 3,
+      "farm_weight": 0.0231
     },
     {
       "id": 2008,
       "score": 1500,
-      "kind": 3
+      "kind": 3,
+      "farm_weight": 0.02
     }
   ],
   "sources": [

@@ -88,11 +88,11 @@ def current_chapter(candidates,stage_ref,stage):
 
 
 class LiveBattle:
-    def __init__(self,account_key=None):
+    def __init__(self,account_key=None,pids=None):
         self.reader=None
         self.account_key=account_key
         found=[]
-        for pid in renderer_pids():
+        for pid in (renderer_pids() if pids is None else pids):
             reader=WindowsReader(pid)
             try:
                 for base,size in reader.heaps():

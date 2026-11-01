@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import math
+import time
+import uuid
 from rules import evolution_gate, feed_candidates
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -20,9 +22,20 @@ def read_json(path):
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix+'.tmp')
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
-    temporary.replace(path)
+    temporary = path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
+    try:
+        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
+        # Windows readers/antivirus can briefly hold the destination without
+        # delete sharing. Keep atomic publication and tolerate that short lock.
+        for attempt in range(11):
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError:
+                if attempt==10:raise
+                time.sleep(.03)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 class Catalog:

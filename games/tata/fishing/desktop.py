@@ -2,6 +2,7 @@
 import argparse
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -25,13 +26,18 @@ def main():
     ap.add_argument('--lead-ms',type=float,default=40)
     ap.add_argument('--observe',action='store_true')
     ap.add_argument('--activate',action='store_true',help='Bring the game forward once at startup')
+    ap.add_argument('--background',action='store_true',help='后台运行（默认）')
+    ap.add_argument('--foreground',action='store_true',help='使用前台系统鼠标')
+    ap.add_argument('--account-key',help='绑定工作台所选账号')
     ap.add_argument('--stop-file',type=Path,help='Additional per-session stop signal (used by the control panel)')
     args=ap.parse_args()
     if args.seconds<=0 or args.casts<0 or not 0<=args.lead_ms<=300:ap.error('Invalid duration, casts, or lead time')
     args.hwnd=args.hwnd or find_game_window()
     if not is_wechat_game(args.hwnd):raise RuntimeError('Selected window is not a WeChat game process.')
-    w=DesktopWindow(args.hwnd);vision=DesktopVision()
-    root=RUNTIME;root.mkdir(parents=True,exist_ok=True)
+    background=not args.foreground and not args.activate
+    if args.background and (args.foreground or args.activate):ap.error('后台与前台参数不能同时使用')
+    vision=DesktopVision()
+    root=RUNTIME/'windows'/str(args.hwnd);root.mkdir(parents=True,exist_ok=True)
     stop=root/'STOP';run=root/datetime.now().strftime('%Y%m%d-%H%M%S-%f');run.mkdir()
     log=(run/'events.jsonl').open('w',encoding='utf8')
     snapshots=SnapshotWriter(run)
@@ -42,21 +48,29 @@ def main():
     in_minigame=False;recovery_tries=0;last_recovery=0.
 
     def event(kind,**data):
-        row=dict(time=datetime.now().isoformat(timespec='milliseconds'),event=kind,**data)
+        row=dict(time=datetime.now().isoformat(timespec='milliseconds'),event=kind,pid=os.getpid(),
+            run_dir=str(run.resolve()),stop_file=str((args.stop_file or stop).resolve()),**data)
         line=json.dumps(row,ensure_ascii=False);print(line,flush=True);log.write(line+'\n');log.flush()
+        (root/'status.json').write_text(json.dumps(row,ensure_ascii=False),encoding='utf-8')
 
     def stopped():
-        return stop.exists() or (args.stop_file is not None and args.stop_file.exists()) or w.emergency_stop()
+        return stop.exists() or (RUNTIME/'STOP').exists() or (args.stop_file is not None and args.stop_file.exists()) or w.emergency_stop()
 
     # Shared with mainline autoplay, including launches outside the unified UI.
     with device_lease('windows-fishing-'+str(args.hwnd),check_processes=False):
         stop.unlink(missing_ok=True)
+        (RUNTIME/'STOP').unlink(missing_ok=True)
+        if background:
+            sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+            from windows_runtime import FishingBackgroundWindow
+            w=FishingBackgroundWindow(args.hwnd,account_key=args.account_key)
+        else:w=DesktopWindow(args.hwnd)
         try:
             if args.activate:
                 user.SetForegroundWindow(args.hwnd)
                 time.sleep(.5)
             started=time.perf_counter()
-            event('start',hwnd=args.hwnd,observe=args.observe,lead_ms=args.lead_ms)
+            event('start',hwnd=args.hwnd,observe=args.observe,lead_ms=args.lead_ms,background=background)
             while time.perf_counter()-started<args.seconds and not stopped():
                 before=time.perf_counter();frame,stamp=w.grab();grabbed=time.perf_counter()
                 sample_time=(stamp+grabbed)/2
