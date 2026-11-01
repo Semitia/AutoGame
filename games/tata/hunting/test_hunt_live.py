@@ -48,6 +48,12 @@ class LiveTests(unittest.TestCase):
         f.data[alias.address:alias.address+32]=f.data[original.address:original.address+32]
         live.refs['ed.TrapBattleScene'].append(alias)
         self.assertEqual(live.snapshot()['screen'],'room')
+        read=live.heap.table
+        def animated(ref):
+            table=read(ref)
+            return dict(table,_shakeElapsed=1 if ref==alias else 0) if ref in (original,alias) else table
+        with patch.object(live.heap,'table',side_effect=animated):
+            self.assertEqual(live.snapshot()['screen'],'room')
         duplicate=f.table(live.heap.table(original))
         live.refs['ed.TrapBattleScene'].append(duplicate)
         with self.assertRaisesRegex(LiveReadError,'场景不唯一'):live.snapshot()

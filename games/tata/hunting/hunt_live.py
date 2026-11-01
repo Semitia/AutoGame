@@ -80,13 +80,15 @@ class HuntLive:
     def scenes(self):
         # Heap discovery can find copied table headers sharing the exact same
         # Lua storage. They are aliases, not separate scene instances. Collapse
-        # only identical storage and contents; genuinely distinct scenes fail.
+        # only identical storage and instance links; animated scalar values
+        # can advance between reads of two headers. Distinct scenes fail.
         found=[];storage={}
         for ref,table in self.objects('ed.TrapBattleScene'):
             if table.get('isUnLoad') is True or not present(self.heap,ref,'sceneRoot'):continue
             signature=self.heap.block(ref.address,32)[7:20]
-            if signature in storage and storage[signature]==table:continue
-            storage[signature]=table;found.append((ref,table))
+            identity=tuple(table.get(k) for k in ('class','__instanceId','_sceneHandle','_enemyActors'))
+            if signature in storage and storage[signature]==identity:continue
+            storage[signature]=identity;found.append((ref,table))
         return found
 
     def snapshot(self):
