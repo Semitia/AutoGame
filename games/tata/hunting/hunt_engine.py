@@ -109,7 +109,18 @@ class Runner:
             self.wait(lambda s:s['screen']=='room' and s['room_token']==state['room_token']
                 and s['rage_active'],8,refresh=False)
 
+    def dismiss_empty_balance_offer(self,state,allow_stop=False):
+        if not state.get('purchase_popup'):return state
+        if state['bullets']>self.options.reserve+state['multiplier']:
+            raise RuntimeError('礼包页面覆盖围猎，停止输入以免误操作')
+        self.input.release();point=self.layout.purchase_close(self.image())
+        current=self.snapshot();self.room_check(state,current)
+        if not current.get('purchase_popup'):return current
+        self.input.click(*point);self.emit('purchase_dismissed',reason='金猎币不足，仅关闭礼包，不购买')
+        return self.wait(lambda s:s['screen']=='room' and not s.get('purchase_popup'),8,allow_stop=allow_stop,refresh=False)
+
     def exit_room(self,state,reason,allow_stop=False):
+        state=self.dismiss_empty_balance_offer(state,allow_stop)
         self.input.release();controls=self.room_controls(state)
         current=self.snapshot();self.room_check(state,current)
         started=time.perf_counter()
@@ -119,6 +130,10 @@ class Runner:
             self.check(allow_stop)
             try:
                 current=self.snapshot()
+                if current['screen']=='room' and current.get('purchase_popup'):
+                    current=self.dismiss_empty_balance_offer(current,allow_stop)
+                    self.room_check(state,current);self.input.click(*controls['close'])
+                    self.emit('exit_requested',reason='关闭余额不足礼包后继续退出')
                 if current['screen']=='lobby':
                     self.cached=None;self.emit('room_exited',elapsed_ms=round((time.perf_counter()-started)*1000,1));return
                 if (current['screen']=='reward' and not current.get('reward_fly_started')
@@ -167,7 +182,8 @@ class Runner:
                     self.input.release()
                     self.wait(lambda current:current['screen'] in ('room','lobby','reward'),20)
                     continue
-                if s['screen']=='room':self.room_controls(s)
+                if s['screen']=='room':
+                    s=self.dismiss_empty_balance_offer(s);self.room_controls(s)
                 action=self.policy.decide(s)
                 if action['kind']=='rage' and time.monotonic()<self.rage_retry_at:
                     action=dict(kind='fire',reason='狂暴按钮暂被遮挡，继续打怪等待重试')

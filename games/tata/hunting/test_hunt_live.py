@@ -42,6 +42,15 @@ def set_field(f,ref,key,value):
 
 
 class LiveTests(unittest.TestCase):
+    def test_visible_chain_gift_is_reported_without_changing_room_identity(self):
+        live,f,refs=fixture()
+        ref=refs['obj']('ed.ChainGiftView',_isStarted=True,isBaseViewClose=False)
+        live.refs['ed.ChainGiftView']=[ref]
+        s=live.snapshot()
+        self.assertTrue(s['purchase_popup']);self.assertEqual(s['screen'],'room')
+        set_field(f,ref,'isBaseViewClose',True)
+        self.assertFalse(live.snapshot()['purchase_popup'])
+
     def test_same_scene_storage_alias_is_collapsed_but_distinct_scene_is_rejected(self):
         live,f,refs=fixture();original=live.refs['ed.TrapBattleScene'][0]
         alias=f.table({})

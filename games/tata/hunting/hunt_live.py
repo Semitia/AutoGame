@@ -8,7 +8,7 @@ from live_battle import find_instances,open_view
 from live_session import account_key
 
 CLASSES={'ed.PlayerModel','ed.PlayerAssetModel','ed.TrapModel','ed.TrapBattleModel',
-         'ed.TrapMainView','ed.TrapBattleView','ed.TrapBattleScene','ed.BaseRewardView'}
+         'ed.TrapMainView','ed.TrapBattleView','ed.TrapBattleScene','ed.BaseRewardView','ed.ChainGiftView'}
 KEYS=tuple(x.encode() for x in ('_uid','backpackModel','_totalBulletGet','_roomID','_units',
     '_currentDungeonIndex','_holdShootAngle','_bossRewardOwners','_enemyActors','isShow'))
 
@@ -132,6 +132,9 @@ class HuntLive:
         rewards=self.objects('ed.BaseRewardView',True)
         if len(rewards)>1:raise LiveReadError('多个有效奖励页，停止输入')
         battle_views=self.objects('ed.TrapBattleView',True)
+        purchase=self.objects('ed.ChainGiftView',True)
+        if len(purchase)>1:raise LiveReadError('多个有效礼包页，停止输入')
+        s['purchase_popup']=bool(purchase)
         lobby=self.objects('ed.TrapMainView',True)
         if len(battle_views)>1 or len(lobby)>1:raise LiveReadError('围猎活动界面不唯一')
         if rewards:

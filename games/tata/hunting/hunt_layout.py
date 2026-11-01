@@ -35,6 +35,12 @@ class Layout:
         return best[1]
 
     def close(self,image):
+        return self.close_shape(image,(.25,.78,.75,1),'围猎底部退出')
+
+    def purchase_close(self,image):
+        return self.close_shape(image,(.75,.06,1,.23),'礼包右上角关闭')
+
+    def close_shape(self,image,region,label):
         frame,factor=self.frame(image);h,w=frame.shape[:2]
         hsv=cv2.cvtColor(frame,cv2.COLOR_BGR2HSV)
         # Common close variants tint the same X white or red. Match its shape.
@@ -42,7 +48,7 @@ class Layout:
         red=cv2.inRange(hsv,(0,120,130),(12,255,255))|cv2.inRange(hsv,(170,120,130),(180,255,255))
         # WeChat may letterbox the Unity canvas inside a taller client area.
         # Search the lower canvas as well as the window bottom, by X shape.
-        mask=white|red;x0=int(w*.25);y0=int(h*.78);roi=mask[y0:,x0:int(w*.75)]
+        mask=white|red;x0=int(w*region[0]);y0=int(h*region[1]);roi=mask[y0:int(h*region[3]),x0:int(w*region[2])]
         raw=self.templates['close'];alpha=(raw[:,:,3]>190).astype(np.uint8)*255
         ys,xs=np.where(alpha>0);alpha=alpha[ys.min():ys.max()+1,xs.min():xs.max()+1]
         best=(-1,None)
@@ -52,7 +58,7 @@ class Layout:
             scores=cv2.matchTemplate(roi,t,cv2.TM_CCOEFF_NORMED)
             _,value,_,p=cv2.minMaxLoc(scores)
             if value>best[0]:best=(value,((x0+p[0]+t.shape[1]/2)/factor,(y0+p[1]+t.shape[0]/2)/factor))
-        if best[0]<.65:raise LayoutError(f'未识别到围猎底部退出叉号（{best[0]:.2f}）')
+        if best[0]<.65:raise LayoutError(f'未识别到{label}叉号（{best[0]:.2f}）')
         return best[1]
 
     def navigation(self,image,direction):

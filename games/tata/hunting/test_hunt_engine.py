@@ -25,6 +25,28 @@ class Controls:
 
 
 class EngineTests(unittest.TestCase):
+    def test_empty_wallet_offer_during_exit_only_closes_offer_then_exits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=room();state['bullets']=120
+            runner,current,controls,events=self.driver(state,Path(directory))
+            runner.layout.purchase_close=lambda image:(30,30)
+            def click(*point):
+                if len(controls.clicks)==1:current[0]['purchase_popup']=True
+                elif point==(30,30):current[0]['purchase_popup']=False
+                else:current[0]=lobby()
+            controls.on_click=click
+            runner.exit_room(state,'余额不足')
+            self.assertEqual(controls.clicks,[(10,10),(30,30),(10,10)])
+            self.assertIn('purchase_dismissed',[name for name,_ in events])
+
+    def test_offer_with_sufficient_wallet_is_not_automatically_dismissed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state=dict(room(),purchase_popup=True)
+            runner,current,controls,_=self.driver(state,Path(directory))
+            with self.assertRaisesRegex(RuntimeError,'礼包页面覆盖'):
+                runner.dismiss_empty_balance_offer(state)
+            self.assertFalse(controls.clicks)
+
     def test_obscured_rage_button_defers_without_clicking_or_stopping(self):
         from hunt_layout import LayoutError
         with tempfile.TemporaryDirectory() as directory:
